@@ -1,7 +1,9 @@
-// Loads the published V2 SDK. Resolves to `opencode-rehydra-core`'s
-// `opencode-plugin` entry via its `exports` map, so the plugin works from an
-// npm install (no in-repo `dist/` required at runtime).
-const sdk = await import("opencode-rehydra-core/opencode-plugin");
+// Load the built V2 SDK from the sibling bundled `dist/` directory. The
+// plugin package copies its slice of the root `dist/opencode-plugin/` output
+// into `./dist/` during the `prepublishOnly` step, so this works both in the
+// monorepo (where `./dist/` is a fresh copy of `../../dist/opencode-plugin/`)
+// and from a published npm install (where `./dist/` ships inside the tarball).
+const sdk = await import("./dist/opencode-plugin/index.js");
 const sdkDefault = sdk.default;
 const sdkPlugin = sdk.plugin;
 const sdkCreate = sdk.createRehydraPlugin;

@@ -1,18 +1,29 @@
 {
   "name": "opencode-rehydar",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Rehydra OpenCode plugin — anonymizes secrets in LLM context using native plugin hooks",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
+  "imports": {
+    "#storage": {
+      "node": "./dist/utils/storage.js",
+      "default": "./dist/utils/storage.js"
+    },
+    "#onnx-runtime": {
+      "node": "./dist/ner/onnx-runtime.js",
+      "default": "./dist/ner/onnx-runtime.js"
+    }
+  },
   "files": [
     "index.js",
     "index.d.ts",
+    "dist/",
     "README.md",
     "README.en.md"
   ],
   "scripts": {
-    "prepublishOnly": "cd ../.. && npm run build"
+    "prepublishOnly": "cd ../.. && npm run build && node ./scripts/sync-dist.mjs"
   },
   "keywords": [
     "anonymization",
@@ -29,9 +40,6 @@
     "type": "git",
     "url": "git+https://github.com/EightDoor/opencode-rehydra-sdk.git",
     "directory": "packages/opencode-plugin"
-  },
-  "dependencies": {
-    "opencode-rehydra-core": "^0.14.0"
   },
   "engines": {
     "node": ">=18.0.0"
