@@ -13,12 +13,12 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/rehydra"><img src="https://img.shields.io/npm/v/rehydra?color=blue" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/opencode-rehydra-core"><img src="https://img.shields.io/npm/v/opencode-rehydra-core?color=blue" alt="npm" /></a>
   <a href="https://github.com/EightDoor/opencode-rehydra-sdk/blob/main/LICENSE"><img src="https://img.shields.io/github/license/EightDoor/opencode-rehydra-sdk" alt="license" /></a>
 </p>
 
 <p align="center">
-  <code>npm i rehydra</code> · <code>npm i <a href="packages/opencode-plugin/">@rehydra/opencode</a></code>
+  <code>npm i opencode-rehydra-core</code> · <code>npm i <a href="packages/opencode-plugin/">opencode-rehydar</a></code>
 </p>
 
 ## The Problem
@@ -39,7 +39,7 @@ You need **pseudonyms** the LLM can work with and your tools can reverse.
 ### OpenCode plugin
 
 ```bash
-npm install @rehydra/opencode
+npm install opencode-rehydar
 ```
 
 Enable it in `opencode.json` (V2 uses a `plugins` list):
@@ -48,7 +48,7 @@ Enable it in `opencode.json` (V2 uses a `plugins` list):
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": { "envFiles": [".env", ".env.local"] }
     }
   ]
@@ -64,7 +64,7 @@ The plugin scrubs the session-title request (`session.hook("title")`), but rehyd
 The highly customizable backbone behind the implementations above. Supports custom NER models, encryption key providers, session storage providers, tag formats and many more tweaks.
 
 ```typescript
-import { anonymize } from 'rehydra';
+import { anonymize } from 'opencode-rehydra-core';
 
 const { anonymizedText } = await anonymize(
   'Email john.smith@acme-corp.com or call John at +41 79 123 45 67'
@@ -129,7 +129,7 @@ import {
   createAnonymizer,
   InMemoryKeyProvider,
   SQLitePIIStorageProvider,
-} from 'rehydra';
+} from 'opencode-rehydra-core';
 
 const keyProvider = new InMemoryKeyProvider();
 const anonymizer = createAnonymizer({
@@ -177,8 +177,8 @@ Disable `ADDRESS` or `POSTAL_CODE` through the detection policy to opt out of ei
 
 | Package | Description |
 |---------|-------------|
-| [`rehydra`](https://www.npmjs.com/package/rehydra) | Core SDK — detect, anonymize, rehydrate |
-| [`@rehydra/opencode`](packages/opencode-plugin/) | OpenCode plugin — scrubs secrets before they reach LLM providers |
+| [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core) | Core SDK — detect, anonymize, rehydrate |
+| [`opencode-rehydar`](packages/opencode-plugin/) | OpenCode plugin — scrubs secrets before they reach LLM providers |
 
 ## Documentation
 

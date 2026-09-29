@@ -1,4 +1,4 @@
-# @rehydra/opencode
+# opencode-rehydar
 
 Scrub detected secrets from OpenCode messages before the main LLM request.
 
@@ -13,7 +13,7 @@ Detected values are masked in requests that pass through the plugin hooks. Local
 ## Install
 
 ```bash
-npm install @rehydra/opencode
+npm install opencode-rehydar
 ```
 
 Add it to `opencode.json`. V2 configures plugins as a list of `{ package, options }` entries:
@@ -22,7 +22,7 @@ Add it to `opencode.json`. V2 configures plugins as a list of `{ package, option
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": {
         "envFiles": [".env", ".env.local"]
       }
@@ -45,7 +45,7 @@ Recommended: disable OpenCode's title agent to avoid placeholder titles:
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": { "envFiles": [".env", ".env.local"] }
     }
   ],
@@ -65,7 +65,7 @@ Set options in the `options` object of the `opencode.json` entry:
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": {
         "envFiles": [".env", ".env.local", ".env.production"],
         "redactValues": ["sk-live-abc123..."],
@@ -81,7 +81,7 @@ Set options in the `options` object of the `opencode.json` entry:
 For custom logic, create `.opencode/plugins/rehydra.ts` and build the plugin with the factory:
 
 ```typescript
-import { createRehydraPlugin } from "@rehydra/opencode";
+import { createRehydraPlugin } from "opencode-rehydar";
 
 export default createRehydraPlugin({
   // Scan multiple env files

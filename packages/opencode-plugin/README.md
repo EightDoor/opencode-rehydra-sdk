@@ -1,4 +1,4 @@
-# @rehydra/opencode
+# opencode-rehydar
 
 在主 LLM 请求发出之前，脱敏 OpenCode 消息中检测到的密钥。
 
@@ -13,7 +13,7 @@
 ## 安装
 
 ```bash
-npm install @rehydra/opencode
+npm install opencode-rehydar
 ```
 
 在 `opencode.json` 中启用。V2 以 `{ package, options }` 条目列表的形式配置插件：
@@ -22,7 +22,7 @@ npm install @rehydra/opencode
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": {
         "envFiles": [".env", ".env.local"]
       }
@@ -45,7 +45,7 @@ OpenCode 通过一次独立的 LLM 调用生成会话标题。插件会脱敏该
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": { "envFiles": [".env", ".env.local"] }
     }
   ],
@@ -65,7 +65,7 @@ OpenCode 通过一次独立的 LLM 调用生成会话标题。插件会脱敏该
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": {
         "envFiles": [".env", ".env.local", ".env.production"],
         "redactValues": ["sk-live-abc123..."],
@@ -81,7 +81,7 @@ OpenCode 通过一次独立的 LLM 调用生成会话标题。插件会脱敏该
 自定义逻辑可以创建 `.opencode/plugins/rehydra.ts` 并用工厂函数构建插件：
 
 ```typescript
-import { createRehydraPlugin } from "@rehydra/opencode";
+import { createRehydraPlugin } from "opencode-rehydar";
 
 export default createRehydraPlugin({
   // 扫描多个 env 文件

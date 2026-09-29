@@ -1,7 +1,7 @@
 {
-  "name": "@rehydra/opencode",
+  "name": "opencode-rehydar",
   "version": "0.14.0",
-  "description": "Rehydra plugin for OpenCode — anonymizes secrets in LLM context using native plugin hooks",
+  "description": "Rehydra OpenCode plugin — anonymizes secrets in LLM context using native plugin hooks",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
@@ -31,7 +31,7 @@
     "directory": "packages/opencode-plugin"
   },
   "dependencies": {
-    "rehydra": "file:../.."
+    "opencode-rehydra-core": "^0.14.0"
   },
   "engines": {
     "node": ">=18.0.0"

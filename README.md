@@ -13,12 +13,12 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/rehydra"><img src="https://img.shields.io/npm/v/rehydra?color=blue" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/opencode-rehydra-core"><img src="https://img.shields.io/npm/v/opencode-rehydra-core?color=blue" alt="npm" /></a>
   <a href="https://github.com/EightDoor/opencode-rehydra-sdk/blob/main/LICENSE"><img src="https://img.shields.io/github/license/EightDoor/opencode-rehydra-sdk" alt="license" /></a>
 </p>
 
 <p align="center">
-  <code>npm i rehydra</code> · <code>npm i <a href="packages/opencode-plugin/">@rehydra/opencode</a></code>
+  <code>npm i opencode-rehydra-core</code> · <code>npm i <a href="packages/opencode-plugin/">opencode-rehydar</a></code>
 </p>
 
 ## 问题所在
@@ -39,7 +39,7 @@
 ### OpenCode 插件
 
 ```bash
-npm install @rehydra/opencode
+npm install opencode-rehydar
 ```
 
 在 `opencode.json` 中启用（V2 使用 `plugins` 列表）：
@@ -48,7 +48,7 @@ npm install @rehydra/opencode
 {
   "plugins": [
     {
-      "package": "@rehydra/opencode",
+      "package": "opencode-rehydar",
       "options": { "envFiles": [".env", ".env.local"] }
     }
   ]
@@ -64,7 +64,7 @@ npm install @rehydra/opencode
 上面实现背后的可高度定制内核。支持自定义 NER 模型、加密密钥提供器、会话存储提供器、标签格式等多种调整。
 
 ```typescript
-import { anonymize } from 'rehydra';
+import { anonymize } from 'opencode-rehydra-core';
 
 const { anonymizedText } = await anonymize(
   'Email john.smith@acme-corp.com or call John at +41 79 123 45 67'
@@ -129,7 +129,7 @@ import {
   createAnonymizer,
   InMemoryKeyProvider,
   SQLitePIIStorageProvider,
-} from 'rehydra';
+} from 'opencode-rehydra-core';
 
 const keyProvider = new InMemoryKeyProvider();
 const anonymizer = createAnonymizer({
@@ -177,8 +177,8 @@ await anonymizer.dispose();
 
 | 包 | 说明 |
 |---|---|
-| [`rehydra`](https://www.npmjs.com/package/rehydra) | 核心 SDK —— 检测、匿名化、还原 |
-| [`@rehydra/opencode`](packages/opencode-plugin/) | OpenCode 插件 —— 在密钥到达 LLM provider 前脱敏 |
+| [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core) | 核心 SDK —— 检测、匿名化、还原 |
+| [`opencode-rehydar`](packages/opencode-plugin/) | OpenCode 插件 —— 在密钥到达 LLM provider 前脱敏 |
 
 ## 文档
 
