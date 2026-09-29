@@ -1,6 +1,6 @@
 {
   "name": "opencode-rehydra-core",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "description": "On-device PII anonymization core SDK (opencode-rehydra-core). Ships the OpenCode plugin as opencode-rehydar.",
   "main": "dist/index.js",
   "module": "dist/index.js",
