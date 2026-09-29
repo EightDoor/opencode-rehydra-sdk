@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+docker/sidecar/
+
+
+# Build output
+dist/
+
+models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# PII maps
+.rehydra-pii-map.json
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Models (large binary files - run `npm run setup:ner` to generate)
+models/ner/
+!models/.gitkeep
+
+# Temporary venv from setup script
+.ner-setup-venv/
+
+# Benchmark results (remove these lines to track in git)
+benchmarks/
+
+rehydra-sidecar/
+
+# Claude Code
+CLAUDE.md
+.claude/
+
+# Outreach materials (not part of the SDK)
+outreach/

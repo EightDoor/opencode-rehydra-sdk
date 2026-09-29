@@ -1,0 +1,390 @@
+import { PIIType, DEFAULT_TYPE_PRIORITY, SECRET_PII_TYPES } from "./pii-types.js";
+
+export * from "./pii-types.js";
+
+/**
+ * Source of entity detection
+ */
+export enum DetectionSource {
+  REGEX = "REGEX",
+  NER = "NER",
+  HYBRID = "HYBRID",
+}
+
+/**
+ * Anonymization mode
+ * - 'pseudonymize': Reversible anonymization with encrypted PII map (default)
+ * - 'anonymize': Irreversible anonymization without PII map
+ */
+export type AnonymizationMode = "pseudonymize" | "anonymize";
+
+// ============================================================================
+// Semantic Attributes for MT-friendly PII tags
+// ============================================================================
+
+/**
+ * Gender attribute for PERSON entities
+ * Used to preserve grammatical agreement during machine translation
+ */
+export type PersonGender = "male" | "female" | "neutral" | "unknown";
+
+/**
+ * Scope attribute for LOCATION entities
+ * Helps MT engines select correct prepositions (e.g., "in Berlin" vs "in Germany")
+ */
+export type LocationScope = "city" | "country" | "region" | "macro-region" | "unknown";
+
+/**
+ * Semantic attributes for PII entities
+ * These attributes help preserve linguistic context during translation
+ */
+export interface SemanticAttributes {
+  /** Gender for PERSON entities */
+  gender?: PersonGender;
+  /** Geographic scope for LOCATION entities */
+  scope?: LocationScope;
+  /** Honorific title extracted from PERSON entities (e.g., "Dr.", "Mrs.") */
+  title?: string;
+}
+
+// ============================================================================
+// Tag Format Configuration
+// ============================================================================
+
+/**
+ * Configures the delimiter format used for PII placeholder tags.
+ *
+ * Default (XML-style): `<PII type="EMAIL" id="1"/>`
+ * Custom example:      `[[PII type="EMAIL" id="1"]]`
+ */
+export interface TagFormat {
+  /** Opening delimiter (e.g., "<" for XML, "[[" for bracket style) */
+  open: string;
+  /** Closing delimiter (e.g., "/>" for XML self-closing, "]]" for bracket style) */
+  close: string;
+  /** Tag keyword (default: "PII"). Allows e.g., "REDACTED" instead of "PII" */
+  keyword?: string;
+}
+
+/**
+ * Default XML-style tag format: `<PII type="..." id="N"/>`
+ */
+export const DEFAULT_TAG_FORMAT: TagFormat = {
+  open: "<",
+  close: "/>",
+  keyword: "PII",
+};
+
+/**
+ * Progress callback for semantic data downloads
+ */
+export type SemanticDownloadProgressCallback = (progress: {
+  file: string;
+  bytesDownloaded: number;
+  totalBytes: number | null;
+  percent: number | null;
+}) => void;
+
+/**
+ * Semantic enrichment configuration
+ * Controls automatic downloading and loading of semantic data for MT-friendly PII tags
+ */
+export interface SemanticConfig {
+  /**
+   * Whether to enable semantic masking (adds gender/scope attributes to PII tags)
+   * @default false
+   */
+  enabled: boolean;
+
+  /**
+   * Whether to auto-download semantic data if not present
+   * Data files include name-gender mappings (~40K names) and location data (~25K cities)
+   * Total download size: ~4 MB
+   * @default true when enabled is true
+   */
+  autoDownload?: boolean;
+
+  /**
+   * Callback for download progress
+   */
+  onDownloadProgress?: SemanticDownloadProgressCallback;
+
+  /**
+   * Callback for status messages
+   */
+  onStatus?: (status: string) => void;
+}
+
+/**
+ * Identifier of a PII tag.
+ *
+ * IDs assigned by the tagger are 1-based, monotonically increasing numbers.
+ * Externally generated IDs (e.g. seeded through an existing PII map) may also
+ * be lowercase alphanumeric strings (`[0-9a-z]+`), which lets callers derive a
+ * stable ID from the value it masks. Decimal-only IDs are always represented
+ * as numbers; any ID containing letters is represented as a lowercase string.
+ */
+export type TagId = number | string;
+
+/**
+ * A detected PII entity with its position and metadata
+ */
+export interface DetectedEntity {
+  /** PII category */
+  type: PIIType;
+  /** Unique identifier within the document (see {@link TagId}) */
+  id: TagId;
+  /** Start character offset in original text (0-based, inclusive) */
+  start: number;
+  /** End character offset in original text (0-based, exclusive) */
+  end: number;
+  /** Detection confidence score (0.0 to 1.0) */
+  confidence: number;
+  /** How this entity was detected */
+  source: DetectionSource;
+  /** Original text (only stored in encrypted pii_map, never logged) */
+  original: string;
+  /** Semantic attributes for MT-friendly tags (gender, scope, etc.) */
+  semantic?: SemanticAttributes;
+}
+
+/**
+ * A span match from a recognizer (before ID assignment)
+ */
+export interface SpanMatch {
+  /** PII category */
+  type: PIIType;
+  /** Start character offset (0-based, inclusive) */
+  start: number;
+  /** End character offset (0-based, exclusive) */
+  end: number;
+  /** Detection confidence score (0.0 to 1.0) */
+  confidence: number;
+  /** How this span was detected */
+  source: DetectionSource;
+  /** The matched text */
+  text: string;
+  /** Semantic attributes for MT-friendly tags (gender, scope, etc.) */
+  semantic?: SemanticAttributes;
+}
+
+/**
+ * Custom ID pattern configuration
+ */
+export interface CustomIdPattern {
+  /** Pattern name for identification */
+  name: string;
+  /** Regular expression pattern */
+  pattern: RegExp;
+  /** PII type to assign (typically CASE_ID or CUSTOMER_ID) */
+  type: PIIType;
+  /** Optional validation function */
+  validate?: (match: string) => boolean;
+}
+
+/**
+ * Anonymization policy configuration
+ */
+export interface AnonymizationPolicy {
+  /** Set of PII types to detect (both regex and NER) */
+  enabledTypes: Set<PIIType>;
+  /** Set of PII types to detect via regex */
+  regexEnabledTypes: Set<PIIType>;
+  /** Set of PII types to detect via NER */
+  nerEnabledTypes: Set<PIIType>;
+  /** Priority order for resolving overlapping entities (higher index = higher priority) */
+  typePriority: PIIType[];
+  /** Minimum confidence thresholds per type (default: 0.5) */
+  confidenceThresholds: Map<PIIType, number>;
+  /** Custom ID patterns for domain-specific identifiers */
+  customIdPatterns: CustomIdPattern[];
+  /** Terms that should not be treated as PII (case-insensitive) */
+  allowlistTerms: Set<string>;
+  /** Terms that should always be treated as PII */
+  denylistPatterns: RegExp[];
+  /** Whether to reuse IDs for identical repeated PII strings */
+  reuseIdsForRepeatedPII: boolean;
+  /** Whether to run leak scan on anonymized output */
+  enableLeakScan: boolean;
+  /** Enable semantic attribute enrichment for MT-friendly tags (gender, location scope) */
+  enableSemanticMasking: boolean;
+  /** Location scopes to exclude from anonymization (e.g., 'country', 'region').
+   *  Requires enableSemanticMasking to be true. Locations whose scope matches
+   *  one of these values are dropped before tagging. */
+  excludeLocationScopes: Set<LocationScope>;
+}
+
+/**
+ * Encrypted PII map entry
+ */
+export interface EncryptedPIIMap {
+  /** AES-256-GCM encrypted data (base64) */
+  ciphertext: string;
+  /** Initialization vector (base64) */
+  iv: string;
+  /** Authentication tag (base64) */
+  authTag: string;
+}
+
+/**
+ * Statistics about the anonymization process
+ */
+export interface AnonymizationStats {
+  /** Count of entities detected per type */
+  countsByType: Record<PIIType, number>;
+  /** Total number of entities detected */
+  totalEntities: number;
+  /** NER model version used */
+  modelVersion: string;
+  /** Policy version/identifier */
+  policyVersion: string;
+  /** Processing time in milliseconds */
+  processingTimeMs: number;
+  /** Whether leak scan passed (if enabled) */
+  leakScanPassed?: boolean;
+  /**
+   * True when NER coverage was truncated because the input exceeded
+   * maxWindowsPerInput (its tail was not scanned by the NER model). Regex
+   * detection is unaffected. Callers enforcing a fail-closed policy should
+   * treat this as incomplete masking. Undefined when NER did not run (e.g.
+   * regex-only) or the producer does not report coverage.
+   */
+  nerTruncated?: boolean;
+  /**
+   * Number of leading input characters NER scanned (in prenormalized space).
+   * Only meaningful when nerTruncated is true: a caller can cut the input at
+   * this offset to keep only the fully-scanned portion. Because prenormalized
+   * text is never longer than the original, cutting the original string at
+   * this offset stays at or before the true boundary (never keeps unscanned
+   * content).
+   */
+  nerCoverageChars?: number;
+}
+
+/**
+ * Result of the anonymization process
+ */
+export interface AnonymizationResult {
+  /** Text with PII replaced by placeholder tags */
+  anonymizedText: string;
+  /** List of detected entities (without original text for safety) */
+  entities: Omit<DetectedEntity, "original">[];
+  /** Encrypted mapping of (type, id) -> original string (undefined in 'anonymize' mode) */
+  piiMap?: EncryptedPIIMap;
+  /** Statistics about the anonymization */
+  stats: AnonymizationStats;
+}
+
+/**
+ * Creates a default anonymization policy with all types enabled
+ */
+/**
+ * Secrets/credentials detection configuration
+ */
+export interface SecretsConfig {
+  /** Enable secrets/credentials detection */
+  enabled: boolean;
+  /** .env file paths or Node.js glob patterns to parse for known secret values */
+  envFiles?: string[];
+  /** Base directory for Node.js envFiles paths/globs. Defaults to process.cwd(). */
+  envBaseDirectory?: string;
+  /** Explicit values to always redact */
+  redactValues?: string[];
+  /** Additional key name patterns for ENV_VAR_SECRET / CONFIG_SECRET detection */
+  secretKeyPatterns?: RegExp[];
+  /** Minimum value length to consider as a secret (default: 4) */
+  minValueLength?: number;
+}
+
+export function createDefaultPolicy(): AnonymizationPolicy {
+  const allTypes = new Set(Object.values(PIIType) as PIIType[]);
+
+  // Secret types are opt-in only — exclude from default enabled set
+  const secretTypeSet = new Set<PIIType>(SECRET_PII_TYPES);
+  for (const secretType of secretTypeSet) {
+    allTypes.delete(secretType);
+  }
+
+  const defaultThresholds = new Map<PIIType, number>();
+  for (const type of allTypes) {
+    // Higher threshold for NER-detected types (more uncertainty)
+    defaultThresholds.set(
+      type,
+      type === PIIType.PERSON || type === PIIType.ORG ? 0.7 : 0.5
+    );
+  }
+
+  return {
+    enabledTypes: allTypes,
+    regexEnabledTypes: new Set([
+      PIIType.ADDRESS,
+      PIIType.EMAIL,
+      PIIType.PHONE,
+      PIIType.POSTAL_CODE,
+      PIIType.IBAN,
+      PIIType.BIC_SWIFT,
+      PIIType.CREDIT_CARD,
+      PIIType.IP_ADDRESS,
+      PIIType.URL,
+      PIIType.DATE,
+      PIIType.CASE_ID,
+      PIIType.CUSTOMER_ID,
+    ]),
+    nerEnabledTypes: new Set([
+      PIIType.PERSON,
+      PIIType.ORG,
+      PIIType.LOCATION,
+      PIIType.ADDRESS,
+      PIIType.DATE_OF_BIRTH,
+    ]),
+    typePriority: [...DEFAULT_TYPE_PRIORITY],
+    confidenceThresholds: defaultThresholds,
+    customIdPatterns: [],
+    allowlistTerms: new Set(),
+    denylistPatterns: [],
+    reuseIdsForRepeatedPII: false,
+    enableLeakScan: true,
+    enableSemanticMasking: false,
+    excludeLocationScopes: new Set(),
+  };
+}
+
+/**
+ * Merges a partial policy with defaults
+ */
+export function mergePolicy(
+  partial: Partial<AnonymizationPolicy>
+): AnonymizationPolicy {
+  const defaultPolicy = createDefaultPolicy();
+
+  // Deep merge confidenceThresholds Map
+  let confidenceThresholds = defaultPolicy.confidenceThresholds;
+  if (partial.confidenceThresholds !== undefined) {
+    confidenceThresholds = new Map(defaultPolicy.confidenceThresholds);
+    // Merge in partial thresholds
+    for (const [type, threshold] of partial.confidenceThresholds) {
+      confidenceThresholds.set(type, threshold);
+    }
+  }
+
+  return {
+    enabledTypes: partial.enabledTypes ?? defaultPolicy.enabledTypes,
+    regexEnabledTypes:
+      partial.regexEnabledTypes ?? defaultPolicy.regexEnabledTypes,
+    nerEnabledTypes: partial.nerEnabledTypes ?? defaultPolicy.nerEnabledTypes,
+    typePriority: partial.typePriority ?? defaultPolicy.typePriority,
+    confidenceThresholds,
+    customIdPatterns:
+      partial.customIdPatterns ?? defaultPolicy.customIdPatterns,
+    allowlistTerms: partial.allowlistTerms ?? defaultPolicy.allowlistTerms,
+    denylistPatterns:
+      partial.denylistPatterns ?? defaultPolicy.denylistPatterns,
+    reuseIdsForRepeatedPII:
+      partial.reuseIdsForRepeatedPII ?? defaultPolicy.reuseIdsForRepeatedPII,
+    enableLeakScan: partial.enableLeakScan ?? defaultPolicy.enableLeakScan,
+    enableSemanticMasking:
+      partial.enableSemanticMasking ?? defaultPolicy.enableSemanticMasking,
+    excludeLocationScopes:
+      partial.excludeLocationScopes ?? defaultPolicy.excludeLocationScopes,
+  };
+}

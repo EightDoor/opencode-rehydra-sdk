@@ -1,0 +1,744 @@
+/**
+ * Replacement Tagger
+ * Replaces PII spans with placeholder tags and builds the PII map
+ */
+
+import {
+  PIIType,
+  SpanMatch,
+  DetectedEntity,
+  AnonymizationPolicy,
+  SemanticAttributes,
+  TagFormat,
+  TagId,
+  DEFAULT_TAG_FORMAT,
+} from "../types/index.js";
+import { sortSpansByPosition } from "../utils/offsets.js";
+import { escapeRegExp } from "../utils/regex.js";
+
+/**
+ * Character class for tag IDs.
+ *
+ * Lowercase alphanumerics only: decimal digits keep counter-assigned IDs
+ * working unchanged, while letters give callers enough space to seed
+ * value-derived IDs without relying on long decimal strings. Uppercase is
+ * excluded so a PII map key `${TYPE}_${id}` stays unambiguous — types are
+ * `[A-Z_]+` and may themselves contain underscores.
+ */
+const ID_CHARS = "[0-9a-z]+";
+
+/**
+ * Converts a raw id attribute value into a {@link TagId}.
+ * Decimal-only IDs become numbers (preserving the existing numeric API);
+ * everything else is folded to a lowercase string.
+ */
+function parseTagId(raw: string): TagId {
+  return /^[0-9]+$/.test(raw) ? parseInt(raw, 10) : raw.toLowerCase();
+}
+
+/**
+ * PII Map entry (before encryption)
+ */
+export interface PIIMapEntry {
+  /** PII type */
+  type: PIIType;
+  /** Entity ID */
+  id: TagId;
+  /** Original text */
+  original: string;
+}
+
+/**
+ * Raw PII Map (before encryption)
+ */
+export type RawPIIMap = Map<string, string>;
+
+/**
+ * Tagging result
+ */
+export interface TaggingResult {
+  /** Anonymized text with placeholder tags */
+  anonymizedText: string;
+  /** List of detected entities with assigned IDs */
+  entities: DetectedEntity[];
+  /** Raw PII map (type_id -> original) */
+  piiMap: RawPIIMap;
+}
+
+/**
+ * Generates a PII placeholder tag
+ * Format depends on TagFormat configuration:
+ * - Default: <PII type="TYPE" id="N"/>
+ * - Custom:  [[PII type="TYPE" id="N"]]
+ *
+ * Semantic attributes (gender, scope) are included when provided and not 'unknown'
+ */
+export function generateTag(
+  type: PIIType,
+  id: TagId,
+  semantic?: SemanticAttributes,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): string {
+  const keyword = tagFormat.keyword ?? "PII";
+  let attrs = `type="${type}"`;
+
+  // Add semantic attributes if present and meaningful
+  if (semantic?.gender && semantic.gender !== "unknown") {
+    attrs += ` gender="${semantic.gender}"`;
+  }
+  if (semantic?.scope && semantic.scope !== "unknown") {
+    attrs += ` scope="${semantic.scope}"`;
+  }
+
+  attrs += ` id="${id}"`;
+
+  return `${tagFormat.open}${keyword} ${attrs}${tagFormat.close}`;
+}
+
+/**
+ * Result of parsing a PII tag
+ */
+export interface ParsedTag {
+  type: PIIType;
+  id: TagId;
+  semantic?: SemanticAttributes;
+}
+
+/**
+ * Parses a PII tag to extract type, id, and semantic attributes
+ * Returns null if not a valid tag
+ *
+ * Supports formats (with configurable delimiters):
+ * - <PII type="TYPE" id="N"/>       (default)
+ * - [[PII type="TYPE" id="N"]]      (custom)
+ * - Plus optional gender/scope attributes
+ */
+export function parseTag(
+  tag: string,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): ParsedTag | null {
+  const keyword = tagFormat.keyword ?? "PII";
+  const open = escapeRegExp(tagFormat.open);
+  const close = escapeRegExp(tagFormat.close);
+
+  // Build regex dynamically from tag format
+  const match = tag.match(
+    new RegExp(
+      `^${open}${escapeRegExp(keyword)}\\s+type="([A-Z_]+)"(?:\\s+gender="(\\w+)")?(?:\\s+scope="([\\w-]+)")?\\s+id="(${ID_CHARS})"\\s*${close}$`
+    )
+  );
+
+  if (match === null) {
+    return null;
+  }
+
+  const [, typeStr, genderStr, scopeStr, idStr] = match;
+  if (typeStr === undefined || idStr === undefined) {
+    return null;
+  }
+
+  // Allow any [A-Z_]+ type string — custom recognizers (createCustomIdRecognizer)
+  // may emit types that are not members of the PIIType enum. Downstream code
+  // treats `type` as an opaque string when building PII map keys.
+  const type = typeStr as PIIType;
+  const id = parseTagId(idStr);
+
+  // Build semantic attributes if present
+  let semantic: SemanticAttributes | undefined;
+  if (
+    (genderStr !== undefined && genderStr !== "") ||
+    (scopeStr !== undefined && scopeStr !== "")
+  ) {
+    semantic = {};
+    if (
+      genderStr !== undefined &&
+      genderStr !== "" &&
+      ["male", "female", "neutral", "unknown"].includes(genderStr)
+    ) {
+      semantic.gender = genderStr as SemanticAttributes["gender"];
+    }
+    if (
+      scopeStr !== undefined &&
+      scopeStr !== "" &&
+      ["city", "country", "region", "macro-region", "unknown"].includes(scopeStr)
+    ) {
+      semantic.scope = scopeStr as SemanticAttributes["scope"];
+    }
+  }
+
+  return { type, id, semantic };
+}
+
+/**
+ * Creates a key for the PII map
+ */
+export function createPIIMapKey(type: PIIType, id: TagId): string {
+  return `${type}_${id}`;
+}
+
+/**
+ * Parses a PII map key to extract type and id
+ * @param key - Key in format "TYPE_ID" (e.g., "PERSON_1")
+ * @returns Parsed type and id, or null if invalid
+ */
+function parsePIIMapKey(key: string): { type: PIIType; id: TagId } | null {
+  const match = key.match(new RegExp(`^([A-Z_]+)_(${ID_CHARS})$`));
+  if (!match || match[1] === undefined || match[2] === undefined) {
+    return null;
+  }
+  // Allow any [A-Z_]+ type — matches what parseTag accepts, so custom-type
+  // entries survive `buildExistingEntityLookup` and session-level ID reuse.
+  const type = match[1] as PIIType;
+  const id = parseTagId(match[2]);
+  return { type, id };
+}
+
+/**
+ * Builds a reverse lookup and max ID from an existing PII map
+ * @param existingPiiMap - Existing PII map (key → value)
+ * @returns Reverse lookup (type:value → id) and global max numeric ID
+ */
+function buildExistingEntityLookup(existingPiiMap: RawPIIMap): {
+  reverseLookup: Map<string, TagId>;
+  maxId: number;
+} {
+  const reverseLookup = new Map<string, TagId>(); // "TYPE:value" → id
+  let maxId = 0;
+
+  for (const [key, value] of existingPiiMap) {
+    const parsed = parsePIIMapKey(key);
+    if (parsed !== null) {
+      // Build reverse lookup: "PERSON:Tom" → 1
+      const lookupKey = `${parsed.type}:${value}`;
+      reverseLookup.set(lookupKey, parsed.id);
+
+      // Track global max ID. Only numeric IDs feed the counter — an
+      // alphanumeric ID has no successor, so it must not affect `nextId`.
+      if (typeof parsed.id === "number" && parsed.id > maxId) {
+        maxId = parsed.id;
+      }
+    }
+  }
+
+  return { reverseLookup, maxId };
+}
+
+/**
+ * Tags PII spans in text and builds the PII map
+ * @param text - Input text to tag
+ * @param matches - Detected PII spans
+ * @param policy - Anonymization policy
+ * @param existingPiiMap - Optional existing PII map for session-level ID reuse
+ * @param tagFormat - Tag format configuration (defaults to XML-style)
+ */
+export function tagEntities(
+  text: string,
+  matches: SpanMatch[],
+  policy: AnonymizationPolicy,
+  existingPiiMap?: RawPIIMap,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): TaggingResult {
+  if (matches.length === 0) {
+    return {
+      anonymizedText: text,
+      entities: [],
+      piiMap: new Map(),
+    };
+  }
+
+  // Sort by start position ascending for ID assignment
+  const sortedAscending = sortSpansByPosition(matches);
+
+  // Build lookup from existing PII map (if provided)
+  const { reverseLookup, maxId } = existingPiiMap
+    ? buildExistingEntityLookup(existingPiiMap)
+    : { reverseLookup: new Map<string, TagId>(), maxId: 0 };
+
+  // Assign IDs
+  const entitiesWithIds: Array<SpanMatch & { id: TagId }> = [];
+
+  // Global ID counter (starts from max existing + 1)
+  let nextId = maxId + 1;
+
+  // Track seen text for ID reuse within this call (if enabled)
+  const seenText = new Map<string, TagId>(); // "type:text" -> id
+
+  for (const match of sortedAscending) {
+    let id: TagId;
+    const lookupKey = `${match.type}:${match.text}`;
+
+    // First, check if this value exists in the existing PII map (session-level reuse)
+    const existingId = reverseLookup.get(lookupKey);
+    if (existingId !== undefined) {
+      id = existingId;
+      // Also add to seenText so repeated occurrences in this call use the same ID
+      seenText.set(lookupKey, id);
+    } else if (policy.reuseIdsForRepeatedPII) {
+      // Check if we've seen this value earlier in this call
+      const seenId = seenText.get(lookupKey);
+      if (seenId !== undefined) {
+        id = seenId;
+      } else {
+        id = nextId++;
+        seenText.set(lookupKey, id);
+      }
+    } else {
+      id = nextId++;
+    }
+
+    entitiesWithIds.push({ ...match, id });
+  }
+
+  // Build PII map
+  const piiMap: RawPIIMap = new Map();
+  for (const entity of entitiesWithIds) {
+    const key = createPIIMapKey(entity.type, entity.id);
+    piiMap.set(key, entity.text);
+  }
+
+  // Sort by start position descending for replacement
+  // (replacing from end to start preserves earlier offsets)
+  const sortedDescending = [...entitiesWithIds].sort(
+    (a, b) => b.start - a.start
+  );
+
+  // Perform replacements
+  let anonymizedText = text;
+  for (const entity of sortedDescending) {
+    const tag = generateTag(entity.type, entity.id, entity.semantic, tagFormat);
+    anonymizedText =
+      anonymizedText.slice(0, entity.start) +
+      tag +
+      anonymizedText.slice(entity.end);
+  }
+
+  // Build final entities list (sorted by position)
+  const entities: DetectedEntity[] = entitiesWithIds.map((e) => ({
+    type: e.type,
+    id: e.id,
+    start: e.start,
+    end: e.end,
+    confidence: e.confidence,
+    source: e.source,
+    original: e.text,
+    semantic: e.semantic,
+  }));
+
+  return {
+    anonymizedText,
+    entities: sortSpansByPosition(entities),
+    piiMap,
+  };
+}
+
+/**
+ * Validates that a tag is well-formed
+ */
+export function isValidTag(
+  tag: string,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): boolean {
+  return parseTag(tag, tagFormat) !== null;
+}
+
+/**
+ * Tag extraction result with the matched text for accurate replacement
+ */
+export interface ExtractedTag {
+  type: PIIType;
+  id: TagId;
+  position: number;
+  /** The actual matched text (needed for replacement when tag is mangled) */
+  matchedText: string;
+  /** Semantic attributes extracted from the tag */
+  semantic?: SemanticAttributes;
+}
+
+/**
+ * Quote characters that might appear after translation
+ * Includes: standard quotes, smart quotes, German quotes, French quotes, etc.
+ *
+ * Unicode references:
+ * - \u0022 (") Standard double quote
+ * - \u0027 (') Standard single quote
+ * - \u0060 (`) Backtick
+ * - \u00AB («) Left guillemet
+ * - \u00BB (») Right guillemet
+ * - \u2018 (') Left single curly quote
+ * - \u2019 (') Right single curly quote
+ * - \u201A (‚) Single low-9 quote
+ * - \u201C (") Left double curly quote
+ * - \u201D (") Right double curly quote
+ * - \u201E („) Double low-9 quote (German)
+ */
+const QUOTE_CHARS = "(?:\\\\\"|[\"'`\u00AB\u00BB\u2018\u2019\u201A\u201C\u201D\u201E])";
+
+/**
+ * Whitespace pattern including various unicode spaces
+ */
+const FLEXIBLE_WS = `[\\s\\u00A0\\u2000-\\u200B]*`;
+const FLEXIBLE_WS_REQUIRED = `[\\s\\u00A0\\u2000-\\u200B]+`;
+
+/**
+ * Builds the opening bracket pattern for fuzzy matching.
+ * For XML-style delimiters, also matches HTML-encoded variants (&lt; / &gt;).
+ * For custom delimiters, matches the literal (escaped) delimiter with flexible internal whitespace.
+ */
+function buildOpenBracketPattern(tagFormat: TagFormat): string {
+  const open = tagFormat.open;
+  if (open === "<") {
+    return `(?:<|&lt;)`;
+  }
+  // For multi-character delimiters, allow flexible whitespace between characters
+  // e.g., "[[" → "\[[\s]*\["
+  if (open.length > 1) {
+    return open
+      .split("")
+      .map((ch) => escapeRegExp(ch))
+      .join(FLEXIBLE_WS);
+  }
+  return escapeRegExp(open);
+}
+
+/**
+ * Builds the closing bracket/self-closing pattern for fuzzy matching.
+ * For XML-style "/>", handles various mangled forms (/>, / >, >, etc.).
+ * For custom delimiters, matches the literal delimiter with flexible internal whitespace.
+ */
+function buildClosingPattern(tagFormat: TagFormat): string {
+  const close = tagFormat.close;
+  if (close === "/>") {
+    // XML self-closing: />, / >, >, /&gt;, &gt;, or nothing if already closed inside quotes
+    const CLOSE_BRACKET = `(?:>|&gt;)`;
+    return `(?:${FLEXIBLE_WS}(?:\\/(?:${FLEXIBLE_WS}${CLOSE_BRACKET})?|${CLOSE_BRACKET}))?`;
+  }
+  // For custom close delimiters, allow flexible whitespace between characters
+  if (close.length > 1) {
+    const pattern = close
+      .split("")
+      .map((ch) => escapeRegExp(ch))
+      .join(FLEXIBLE_WS);
+    return `${FLEXIBLE_WS}${pattern}`;
+  }
+  return `${FLEXIBLE_WS}${escapeRegExp(close)}`;
+}
+
+/**
+ * Builds the malformed id-close pattern for fuzzy matching.
+ * For XML-style tags, handles cases where /> got placed inside the id quotes (e.g., id="7/>").
+ * For custom formats, handles the close delimiter leaking into the id value.
+ */
+function buildIdCloseLeakPattern(tagFormat: TagFormat): string {
+  const close = tagFormat.close;
+  if (close === "/>") {
+    return `(?:\\/?(?:>|&gt;)?)?`;
+  }
+  // For custom delimiters, allow individual close-delimiter characters to
+  // partially leak into the id value (e.g., id="7]" for close="]]"),
+  // but not the full delimiter which would consume a valid closing.
+  if (close.length > 1) {
+    const partial = close
+      .slice(0, -1)
+      .split("")
+      .map((ch) => `${escapeRegExp(ch)}?`)
+      .join("");
+    return `(?:${partial})?`;
+  }
+  return "";
+}
+
+// Cache compiled fuzzy patterns keyed by "open\0close\0keyword"
+const fuzzyPatternCache = new Map<string, RegExp[]>();
+
+function fuzzyPatternCacheKey(tagFormat: TagFormat): string {
+  return `${tagFormat.open}\0${tagFormat.close}\0${tagFormat.keyword ?? "PII"}`;
+}
+
+/**
+ * Builds patterns for fuzzy PII tag matching
+ * Handles various translation artifacts and optional semantic attributes
+ *
+ * For XML-style tags, also handles HTML-encoded brackets (&lt; / &gt;).
+ * For custom formats, handles flexible whitespace within multi-character delimiters.
+ *
+ * Results are cached per unique TagFormat configuration.
+ */
+function buildFuzzyTagPatterns(
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): RegExp[] {
+  const cacheKey = fuzzyPatternCacheKey(tagFormat);
+  const cached = fuzzyPatternCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const keyword = tagFormat.keyword ?? "PII";
+  const openPattern = buildOpenBracketPattern(tagFormat);
+  const closingPattern = buildClosingPattern(tagFormat);
+  const idCloseLeak = buildIdCloseLeakPattern(tagFormat);
+
+  // Pattern for type attribute: type = "VALUE" (flexible spacing and quotes)
+  const typeAttr = `type${FLEXIBLE_WS}=${FLEXIBLE_WS}${QUOTE_CHARS}([A-Z_]+)${QUOTE_CHARS}`;
+  // Pattern for id attribute: id = "VALUE" (flexible spacing and quotes)
+  // Also handles malformed cases where close delimiter got placed inside the quotes
+  const idAttr = `id${FLEXIBLE_WS}=${FLEXIBLE_WS}${QUOTE_CHARS}(${ID_CHARS})${idCloseLeak}${QUOTE_CHARS}`;
+  // Optional gender attribute
+  const genderAttr = `(?:${FLEXIBLE_WS}gender${FLEXIBLE_WS}=${FLEXIBLE_WS}${QUOTE_CHARS}(\\w+)${QUOTE_CHARS})?`;
+  // Optional scope attribute
+  const scopeAttr = `(?:${FLEXIBLE_WS}scope${FLEXIBLE_WS}=${FLEXIBLE_WS}${QUOTE_CHARS}([\\w-]+)${QUOTE_CHARS})?`;
+
+  const escapedKeyword = escapeRegExp(keyword);
+
+  const patterns = [
+    // type first with optional gender/scope
+    // Groups: type=1, gender=2, scope=3, id=4
+    new RegExp(
+      `${openPattern}${FLEXIBLE_WS}${escapedKeyword}${FLEXIBLE_WS_REQUIRED}${typeAttr}${genderAttr}${scopeAttr}${FLEXIBLE_WS_REQUIRED}${idAttr}${closingPattern}`,
+      "gi"
+    ),
+    // id first
+    // Groups: id=1, type=2
+    new RegExp(
+      `${openPattern}${FLEXIBLE_WS}${escapedKeyword}${FLEXIBLE_WS_REQUIRED}${idAttr}${FLEXIBLE_WS_REQUIRED}${typeAttr}${closingPattern}`,
+      "gi"
+    ),
+  ];
+
+  fuzzyPatternCache.set(cacheKey, patterns);
+  return patterns;
+}
+
+/**
+ * Extracts all PII tags from anonymized text using fuzzy matching
+ * Handles mangled tags that may occur after translation
+ *
+ * Translation can mangle tags by:
+ * - Changing quote types (" → " or „ or « etc.)
+ * - Adding/removing whitespace
+ * - Changing case (type → Type, PII → pii)
+ * - Reordering attributes (id before type)
+ * - Modifying self-closing syntax (/> → / > or >)
+ */
+export function extractTags(
+  anonymizedText: string,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): ExtractedTag[] {
+  const tags: ExtractedTag[] = [];
+  const patterns = buildFuzzyTagPatterns(tagFormat);
+
+  // Track positions we've already matched to avoid duplicates from overlapping patterns
+  const matchedPositions = new Set<number>();
+
+  for (let patternIndex = 0; patternIndex < patterns.length; patternIndex++) {
+    const pattern = patterns[patternIndex];
+    if (pattern === undefined) continue;
+
+    let match: RegExpExecArray | null;
+    // Reset lastIndex for each pattern
+    pattern.lastIndex = 0;
+
+    while ((match = pattern.exec(anonymizedText)) !== null) {
+      if (matchedPositions.has(match.index)) {
+        continue; // Skip duplicates from overlapping patterns
+      }
+
+      // Extract type, id, and semantic attributes based on which pattern matched
+      // Pattern 0: type first with optional gender/scope (groups: type=1, gender=2, scope=3, id=4)
+      // Pattern 1: id first (groups: id=1, type=2)
+      let typeStr: string | undefined;
+      let idStr: string | undefined;
+      let genderStr: string | undefined;
+      let scopeStr: string | undefined;
+
+      if (patternIndex === 0) {
+        typeStr = match[1];
+        genderStr = match[2];
+        scopeStr = match[3];
+        idStr = match[4];
+      } else {
+        idStr = match[1];
+        typeStr = match[2];
+      }
+
+      if (typeStr !== undefined && idStr !== undefined) {
+        // Accept any [A-Z_]+ type. Custom recognizers registered via
+        // createCustomIdRecognizer may emit types that are not PIIType enum
+        // members; rehydrate() must still be able to restore them.
+        const type = typeStr.toUpperCase() as PIIType;
+        // Fuzzy matching is case-insensitive, so fold the id back to lowercase
+        // (lossless: ids never contain uppercase).
+        const id = parseTagId(idStr);
+
+        // Build semantic attributes if present
+        let semantic: SemanticAttributes | undefined;
+        if (
+          (genderStr !== undefined && genderStr !== "") ||
+          (scopeStr !== undefined && scopeStr !== "")
+        ) {
+          semantic = {};
+          if (
+            genderStr !== undefined &&
+            genderStr !== "" &&
+            ["male", "female", "neutral", "unknown"].includes(
+              genderStr.toLowerCase()
+            )
+          ) {
+            semantic.gender =
+              genderStr.toLowerCase() as SemanticAttributes["gender"];
+          }
+          if (
+            scopeStr !== undefined &&
+            scopeStr !== "" &&
+            ["city", "country", "region", "macro-region", "unknown"].includes(
+              scopeStr.toLowerCase()
+            )
+          ) {
+            semantic.scope =
+              scopeStr.toLowerCase() as SemanticAttributes["scope"];
+          }
+        }
+
+        tags.push({
+          type,
+          id,
+          position: match.index,
+          matchedText: match[0],
+          semantic,
+        });
+        matchedPositions.add(match.index);
+      }
+    }
+  }
+
+  // Sort by position ascending
+  tags.sort((a, b) => a.position - b.position);
+
+  return tags;
+}
+
+/**
+ * Extracts tags using strict matching (original behavior)
+ * Useful when you know tags haven't been mangled
+ * Supports optional gender and scope attributes
+ */
+export function extractTagsStrict(
+  anonymizedText: string,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): ExtractedTag[] {
+  const tags: ExtractedTag[] = [];
+  const keyword = tagFormat.keyword ?? "PII";
+  const open = escapeRegExp(tagFormat.open);
+  const close = escapeRegExp(tagFormat.close);
+  // Pattern matches: OPEN KEYWORD type="X" [gender="Y"] [scope="Z"] id="N" CLOSE
+  const tagPattern = new RegExp(
+    `${open}${escapeRegExp(keyword)}\\s+type="([A-Z_]+)"(?:\\s+gender="(\\w+)")?(?:\\s+scope="([\\w-]+)")?\\s+id="(${ID_CHARS})"\\s*${close}`,
+    "g"
+  );
+
+  let match: RegExpExecArray | null;
+  while ((match = tagPattern.exec(anonymizedText)) !== null) {
+    const typeStr = match[1];
+    const genderStr = match[2];
+    const scopeStr = match[3];
+    const idStr = match[4];
+
+    if (typeStr !== undefined && idStr !== undefined) {
+      // Accept any [A-Z_]+ type (see extractTags for rationale).
+      const type = typeStr as PIIType;
+      const id = parseTagId(idStr);
+
+      // Build semantic attributes if present
+      let semantic: SemanticAttributes | undefined;
+      if (
+        (genderStr !== undefined && genderStr !== "") ||
+        (scopeStr !== undefined && scopeStr !== "")
+      ) {
+        semantic = {};
+        if (
+          genderStr !== undefined &&
+          genderStr !== "" &&
+          ["male", "female", "neutral", "unknown"].includes(genderStr)
+        ) {
+          semantic.gender = genderStr as SemanticAttributes["gender"];
+        }
+        if (
+          scopeStr !== undefined &&
+          scopeStr !== "" &&
+          ["city", "country", "region", "macro-region", "unknown"].includes(scopeStr)
+        ) {
+          semantic.scope = scopeStr as SemanticAttributes["scope"];
+        }
+      }
+
+      tags.push({
+        type,
+        id,
+        position: match.index,
+        matchedText: match[0],
+        semantic,
+      });
+    }
+  }
+
+  return tags;
+}
+
+/**
+ * Counts entities by type
+ */
+export function countEntitiesByType(
+  entities: DetectedEntity[]
+): Record<PIIType, number> {
+  const counts: Record<PIIType, number> = {} as Record<PIIType, number>;
+
+  // Initialize all types to 0
+  for (const type of Object.values(PIIType)) {
+    counts[type] = 0;
+  }
+
+  // Count entities
+  for (const entity of entities) {
+    counts[entity.type] = (counts[entity.type] ?? 0) + 1;
+  }
+
+  return counts;
+}
+
+/**
+ * Rehydrates anonymized text using the PII map
+ * Uses fuzzy matching to handle tags that may have been mangled by translation
+ *
+ * @param anonymizedText - Text containing PII tags (possibly mangled)
+ * @param piiMap - Map of PII keys to original values
+ * @param strict - If true, use strict matching (original behavior). Default: false
+ * @param tagFormat - Tag format configuration (defaults to XML-style)
+ * @returns Text with PII tags replaced by original values
+ */
+export function rehydrate(
+  anonymizedText: string,
+  piiMap: RawPIIMap,
+  strict: boolean = false,
+  tagFormat: TagFormat = DEFAULT_TAG_FORMAT
+): string {
+  let result = anonymizedText;
+  const tags = strict
+    ? extractTagsStrict(anonymizedText, tagFormat)
+    : extractTags(anonymizedText, tagFormat);
+
+  // Sort by position descending for replacement
+  // (replacing from end to start preserves earlier offsets)
+  tags.sort((a, b) => b.position - a.position);
+
+  for (const { type, id, position, matchedText } of tags) {
+    const key = createPIIMapKey(type, id);
+    const original = piiMap.get(key);
+
+    if (original !== undefined) {
+      // Use the actual matched text length for replacement
+      // This handles mangled tags where the length differs from the canonical form
+      result =
+        result.slice(0, position) +
+        original +
+        result.slice(position + matchedText.length);
+    }
+  }
+
+  return result;
+}

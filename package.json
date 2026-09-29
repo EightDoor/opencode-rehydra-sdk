@@ -1,0 +1,147 @@
+{
+  "name": "rehydra",
+  "version": "0.14.0",
+  "description": "On-device PII anonymization SDK plus the official OpenCode plugin (V2 API).",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "browser": "./dist/browser.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "imports": {
+    "#storage": {
+      "browser": "./dist/utils/storage.browser.js",
+      "node": "./dist/utils/storage.js",
+      "default": "./dist/utils/storage.js"
+    },
+    "#onnx-runtime": {
+      "browser": "./dist/ner/onnx-runtime.browser.js",
+      "node": "./dist/ner/onnx-runtime.js",
+      "default": "./dist/ner/onnx-runtime.js"
+    }
+  },
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "default": "./dist/browser.js"
+      },
+      "node": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./storage/sqlite": {
+      "node": {
+        "types": "./dist/storage/sqlite.d.ts",
+        "default": "./dist/storage/sqlite.js"
+      }
+    },
+    "./streaming": {
+      "node": {
+        "types": "./dist/streaming/index.d.ts",
+        "default": "./dist/streaming/index.js"
+      }
+    },
+    "./proxy": {
+      "node": {
+        "types": "./dist/proxy/index.d.ts",
+        "default": "./dist/proxy/index.js"
+      }
+    },
+    "./opencode-plugin": {
+      "types": "./dist/opencode-plugin/index.d.ts",
+      "default": "./dist/opencode-plugin/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:browser-bundle": "bash scripts/test-browser-bundle.sh",
+    "benchmark": "vitest bench",
+    "benchmark:compare": "vitest bench --run test/benchmark/anonymizer-comparison.bench.ts",
+    "benchmark:save": "mkdir -p benchmarks/history && vitest bench --run --outputJson=\"./benchmarks/history/$(date +%Y-%m-%d-%H%M%S).json\"",
+    "benchmark:memory": "npx tsx scripts/bench-memory.ts",
+    "benchmark:latency": "npx tsx scripts/bench-latency.ts",
+    "test:streaming": "npx tsx scripts/test-streaming.ts",
+    "lint": "eslint src --ext .ts",
+    "clean": "rm -rf dist",
+    "setup:ner": "bash scripts/setup-ner-model.sh --quantize",
+    "setup:ner:standard": "bash scripts/setup-ner-model.sh",
+    "setup:ner:upload": "bash scripts/setup-ner-model.sh --quantize --upload",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "anonymization",
+    "pii",
+    "privacy",
+    "ner",
+    "onnx",
+    "opencode",
+    "opencode-plugin"
+  ],
+  "author": "EightDoor",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EightDoor/opencode-rehydra-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EightDoor/opencode-rehydra-sdk/issues"
+  },
+  "homepage": "https://github.com/EightDoor/opencode-rehydra-sdk#readme",
+  "optionalDependencies": {
+    "onnxruntime-node": "^1.17.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^11.0.0",
+    "onnxruntime-node": "^1.17.0",
+    "onnxruntime-web": "^1.17.0"
+  },
+  "peerDependenciesMeta": {
+    "onnxruntime-node": {
+      "optional": true
+    },
+    "onnxruntime-web": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "better-sqlite3": "^11.0.0",
+    "eslint": "^8.55.0",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^5.3.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3"
+  }
+}
