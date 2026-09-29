@@ -13,7 +13,7 @@
  */
 
 import { homedir } from "node:os";
-import { sep } from "node:path";
+import { join } from "node:path";
 
 import type { AnonymizerConfig } from "../../core/anonymizer.js";
 import {
@@ -30,8 +30,8 @@ const DEFAULT_MIN_VALUE_LENGTH = 4;
 
 /**
  * Resolves the canonical OpenCode config directory (`$XDG_CONFIG_HOME/opencode`
- * or `$HOME/.config/opencode`). Returns `undefined` when neither location is
- * usable. Honours `XDG_CONFIG_HOME` on every platform so distros overriding
+ * or `$HOME/.config/opencode`). Returns `undefined` when no usable path can be
+ * derived. Honours `XDG_CONFIG_HOME` on every platform so distros overriding
  * the spec keep working, and falls back to `~/.config/opencode` per the
  * OpenCode XDG spec.
  */
@@ -41,38 +41,30 @@ export function opencodeConfigDirectory(
 ): string | undefined {
   const xdg = env.XDG_CONFIG_HOME;
   if (typeof xdg === "string" && xdg.trim().length > 0) {
-    return joinPath(xdg, "opencode");
+    return join(xdg, "opencode");
   }
-  const home = env.HOME ?? env.USERPROFILE ?? homedirFn();
-  if (typeof home === "string" && home.trim().length > 0) {
-    return joinPath(home, ".config", "opencode");
+  const candidates = [env.HOME, env.USERPROFILE, homedirFn()];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return join(candidate, ".config", "opencode");
+    }
   }
   return undefined;
 }
 
-/** Joins POSIX/Windows path segments without depending on `node:path.join`. */
-function joinPath(...segments: string[]): string {
-  return segments
-    .filter((segment) => segment.length > 0)
-    .join(sep)
-    .replace(new RegExp(`${sep}+`, "g"), sep);
-}
-
 /**
  * Heuristic: returns `true` when `projectDir` is somewhere underneath (or equal
- * to) `opencodeConfigDir`, so the project itself is *not* the OpenCode config
- * directory and the env-file fallback below should kick in.
+ * to) `opencodeConfigDir`. Mirrors a directory-equality check rather than
+ * relying on a separator-suffix workaround.
  */
 export function shouldUseOpencodeConfigDir(
   projectDir: string,
   opencodeConfigDir: string,
 ): boolean {
-  const normalized = (value: string): string =>
-    value.endsWith(sep) ? value : value + sep;
-  const a = normalized(projectDir);
-  const b = normalized(opencodeConfigDir);
-  if (a === b) return false;
-  return a.startsWith(b);
+  if (projectDir === opencodeConfigDir) return false;
+  const withSep = opencodeConfigDir.replace(/[\/\\]+$/, "") + "/";
+  const candidate = projectDir.replace(/[\/\\]+$/, "");
+  return candidate.startsWith(withSep);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -149,9 +141,14 @@ export function normalizePluginOptions(
   if (isRecord(source.policy)) {
     normalized.policy = source.policy as Partial<AnonymizationPolicy>;
   }
+  // Only forward `anonymizer` when the user actually configured one.
+  // Leaving it `undefined` lets {@link anonymizerConfigFromOptions} distinguish
+  // "user did not configure" from "user configured an empty block", which is
+  // required to honour the global `~/.config/opencode` default for
+  // `secrets.envBaseDirectory`.
   normalized.anonymizer = isRecord(source.anonymizer)
     ? (source.anonymizer as AnonymizerConfig)
-    : { secrets: defaultSecretsConfig(normalized) };
+    : undefined;
 
   return normalized;
 }

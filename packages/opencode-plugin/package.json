@@ -23,7 +23,7 @@
     "README.en.md"
   ],
   "scripts": {
-    "prepublishOnly": "cd ../.. && npm run build && node ./scripts/sync-dist.mjs"
+    "prepublishOnly": "node ./scripts/sync-dist.mjs"
   },
   "keywords": [
     "anonymization",
