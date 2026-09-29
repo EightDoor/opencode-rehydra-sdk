@@ -3,12 +3,13 @@
 </p>
 
 <p align="center">
-  PII security for AI workflows, coding agents and browser workloads.<br/>
-  Detects, replaces, encrypts, and <strong>rehydrates</strong> back when needed.
+  为 AI 工作流、编程助手和浏览器场景提供 PII 安全防护。<br/>
+  检测、替换、加密，并在需要时<strong>还原</strong>真实值。
 </p>
 
 <p align="center">
-  <a href="https://github.com/EightDoor/opencode-rehydra-sdk/issues">Issues</a>
+  <a href="https://github.com/EightDoor/opencode-rehydra-sdk/issues">Issues</a> ·
+  <a href="./README.en.md">English</a>
 </p>
 
 <p align="center">
@@ -20,37 +21,28 @@
   <code>npm i rehydra</code> · <code>npm i <a href="packages/opencode-plugin/">@rehydra/opencode</a></code>
 </p>
 
-## The Problem
+## 问题所在
 
-When you send code, messages, or documents through an LLM, real names, emails, and API keys go with them. Existing anonymizers strip PII permanently but that breaks the conversation. The LLM can't reason about "John" if it never sees "John," and it can't write a file referencing `john@acme.com` if that address was permanently removed.
+当你把代码、消息或文档发给 LLM 时，真实姓名、邮箱和 API Key 会一并离开你的机器。已有的匿名化工具要么永久删除 PII（那样对话就断了），要么只是临时遮盖（那样模型无法推理）。
 
-You need pseudonyms that the LLM can work with, and that your tools can reverse.
+你需要的是**化名**：模型能拿来推理，你的工具又能还原回去。
 
-## How Rehydra Solves It
+## Rehydra 的做法
 
-1. **Detect** — Regex patterns catch structured PII (emails, phones, UK postcodes, IBANs, credit cards). An on-device NER model (ONNX, no cloud calls) catches soft PII (names, organizations, locations).
-2. **Replace** — Each PII value gets a stable placeholder: `<PII type="PERSON" id="1"/>`. The LLM works with these instead of real data.
-3. **Persist** — The same entity always gets the same ID, across every message in the session. The LLM maintains relational coherence without ever seeing real PII.
-4. **Rehydrate** — When a response needs to become real again (a file write, a bash command, a final answer), Rehydra restores the original values from its encrypted map.
+1. **检测** — 正则捕获结构化 PII（邮箱、电话、英国邮编、IBAN、信用卡卡号）。本地 NER 模型（ONNX，不联网）捕获非结构化 PII（人名、机构、地点）。
+2. **替换** — 每个 PII 值获得一个稳定占位符：`<PII type="PERSON" id="1"/>`。模型用占位符而不是真实数据来工作。
+3. **持久化** — 同一实体在整个会话的每条消息里都是同一个 ID。模型能维持关系一致性，却从未看到真实 PII。
+4. **还原** — 当响应需要变回真实值时（写文件、执行 bash 命令、给出最终答案），Rehydra 从加密映射中还原原始值。
 
-## Quick Start
+## 快速开始
 
-### Proxy — protect your AI coding tools
-
-The SDK ships a proxy module you can embed in your own services (`rehydra/proxy`). It anonymizes outbound messages and rehydrates tool-call arguments before they execute, so the LLM works with placeholders while your tools always get real values.
-
-```typescript
-import { createRehydraProxy } from "rehydra/proxy";
-// Mount createRehydraProxy({ ... }) on the host you control.
-```
-
-Tool results (file reads, bash output) are anonymized on the way out. Tool call arguments (file writes, bash commands) are rehydrated on the way back.
-
-### OpenCode plugin
+### OpenCode 插件
 
 ```bash
 npm install @rehydra/opencode
 ```
+
+在 `opencode.json` 中启用（V2 使用 `plugins` 列表）：
 
 ```json
 {
@@ -63,13 +55,13 @@ npm install @rehydra/opencode
 }
 ```
 
-Intercepts the conversation between [OpenCode](https://github.com/sst/opencode) and the LLM. Secrets from `.env` files are replaced with placeholders before they leave your machine and restored before tools execute. Requires OpenCode's **V2** plugin API; the V1 `plugin` configuration and hook set are not supported.
+它拦截 [OpenCode](https://github.com/sst/opencode) 与 LLM 之间的对话。`.env` 文件中的密钥在离开本机前被替换为占位符，在工具执行前被还原。需要 OpenCode 的 **V2** 插件 API；不支持 V1 的 `plugin` 配置和 hook 集合。
 
-The plugin scrubs the session-title request (`session.hook("title")`), but it rehydrates responses only for the primary answer (`http.response` with `kind === "primary"`). Session titles can therefore display `<PII .../>` placeholders, so disable the title agent to avoid placeholder titles; see [the limitation and configuration](packages/opencode-plugin/README.md#session-title-limitation).
+插件会脱敏会话标题请求（`session.hook("title")`），但只对主回答还原响应（`http.response` 且 `kind === "primary"`）。因此会话标题可能显示 `<PII .../>` 占位符，建议禁用标题 agent 以避免占位符标题，详见[限制与配置](packages/opencode-plugin/README.md#session-title-limitation)。
 
-### Library — embed PII anonymization in your app
+### 作为库嵌入你的应用
 
-Highly customizable backbone of the implementations above. Supports custom NER models, encryption key providers, session storage providers, tag formats and many more tweaks.
+上面实现背后的可高度定制内核。支持自定义 NER 模型、加密密钥提供器、会话存储提供器、标签格式等多种调整。
 
 ```typescript
 import { anonymize } from 'rehydra';
@@ -79,49 +71,40 @@ const { anonymizedText } = await anonymize(
 );
 ```
 
-Works in **Node.js**, **Bun**, and **browsers**. No data leaves your machine.
+在 **Node.js**、**Bun** 和**浏览器**中都能运行。数据不离开你的机器。
 
-## Why Rehydra?
+### 代理模块
 
-### Reversible, not destructive
+SDK 内置 `rehydra/proxy` 模块，可嵌入你自己的服务。它在出站消息上做脱敏，并在工具调用执行前还原参数，因此模型用占位符工作，而你的工具始终拿到真实值。
 
-Most PII libraries mask or redact permanently. Rehydra encrypts the original values with AES-256-GCM and restores them on demand. Anonymize for the LLM, rehydrate for your tools — a full round-trip, not a one-way street.
+```typescript
+import { createRehydraProxy } from "rehydra/proxy";
+// 将 createRehydraProxy({ ... }) 挂载到你自己的宿主上。
+```
 
-### Session-persistent identity
+工具结果（文件读取、bash 输出）在返回时脱敏。工具调用参数（文件写入、bash 命令）在执行前还原。
 
-`PERSON_1` stays `PERSON_1` across every message in the conversation. When John Smith comes up in message 1, message 5, and message 20, the LLM sees the same placeholder every time. It can track relationships, reference earlier context, and produce coherent multi-turn output — without ever seeing real PII. Sessions persist to SQLite (server), IndexedDB (browser), or in-memory, so identity mappings survive restarts.
+## 为什么选 Rehydra
 
-### Zero-trust, on-device
+### 可逆，而非破坏性
 
-NER inference runs locally via ONNX Runtime (~280 MB quantized model). No API calls to external services. Works offline. PII never leaves your machine.
+多数 PII 库做的是永久遮盖或删除。Rehydra 用 AES-256-GCM 加密原始值，按需还原。给模型用匿名值，给工具用还原值——完整往返，而不是单行道。
 
-### LLM proxy with tool-call rehydration
+### 跨会话稳定的身份
 
-The proxy module sits between your coding agent and the API. It anonymizes outbound messages and — critically — rehydrates tool-call arguments before they execute. When the LLM says "write `<PII type="EMAIL" id="1"/>` to config.yaml," the proxy restores the real email before the file is written. Your agent works normally. Your data stays private.
+`PERSON_1` 在整段对话的每条消息里都是 `PERSON_1`。当 John Smith 分别出现在第 1、5、20 条消息里，模型每次看到的都是同一个占位符。它能追踪关系、引用前文、产出连贯的多轮输出——而从未看到真实 PII。会话可持久化到 SQLite（服务端）、IndexedDB（浏览器）或内存，身份映射在重启后依然有效。
 
-### Secrets, not just PII
+### 零信任，端侧运行
 
-Beyond names, emails, and phone numbers, Rehydra detects API keys (OpenAI, Anthropic, Stripe, AWS, GitHub...), JWTs, private keys, database connection strings, and `.env` secrets.
+NER 推理通过 ONNX Runtime 在本地执行（量化模型约 280 MB）。不调用任何外部 API。可离线工作。PII 永不离开你的机器。
 
-### Streaming-aware
+### 关键能力
 
-Purpose-built for LLM token streams. A sentence-buffered chunking system with NER overlap preservation ensures accurate detection even when PII spans chunk boundaries — with a low-latency mode for real-time streaming.
-
-### Streaming server-side tool loops
-
-`createRehydraFetch` supports `onToolCall` for OpenAI Chat Completions and Anthropic Messages requests with `stream: true`. The first response is buffered and its complete tool calls are validated before callbacks run. Interleaved calls retain their IDs and arguments. Tool arguments are rehydrated locally, and tool results are anonymized before the next request.
-
-Continuation requests use `stream: false`. The final response is returned as provider-compatible SSE, including completion events and usage. This buffers the initial response and final JSON response, so it does not preserve token-by-token generation latency. Streams without tool calls retain their original events.
-
-Set `maxToolRounds` to bound callback rounds, and `maxToolResponseBytes` to bound each buffered response; defaults are 10 rounds and 8 MiB. On reaching the round limit, pending calls are returned to the caller without execution. Pass an `AbortSignal` through fetch to cancel buffering or prevent later callbacks; a callback already running must manage its own cancellation. Truncated calls, malformed arguments, and oversized streams fail before tool execution. Upstream HTTP errors retain their status. OpenAI tool loops require a single completion choice. Custom providers can opt in through `streamingToolLoop` on `LLMContentProvider`.
-
-### Semantic enrichment for machine translation
-
-Optional gender and scope attributes on PII tags (`<PII type="PERSON" gender="male" id="1"/>`, `<PII type="LOCATION" scope="city" id="2"/>`) preserve grammatical context for downstream systems.
-
-### Stable external tag IDs
-
-Callers that manage PII maps across independent anonymization calls can seed lowercase alphanumeric IDs through `existingPiiMap`. This allows an ID to be derived from the value it masks, for example with a keyed HMAC, instead of depending on a per-call counter.
+- **密钥而不只是 PII**：除姓名、邮箱、电话外，还能检测 API Key（OpenAI、Anthropic、Stripe、AWS、GitHub 等）、JWT、私钥、数据库连接串和 `.env` 密钥。
+- **面向流式**：专为 LLM token 流设计。带句子缓冲的分块系统配合 NER 重叠保留，确保 PII 跨分块边界时仍能准确检测，并提供低延迟实时流式模式。
+- **服务端工具循环**：`createRehydraFetch` 支持在 `stream: true` 的 OpenAI Chat Completions 与 Anthropic Messages 请求上使用 `onToolCall`。首次响应被缓冲，其完整工具调用在回调执行前完成校验。交错调用保留各自的 ID 和参数。工具参数在本地还原，工具结果在下一次请求前脱敏。续请求使用 `stream: false`，最终响应以兼容 provider 的 SSE 返回，包含完成事件和用量信息；代价是缓冲了首包和最终 JSON，因此不保留逐 token 的生成延迟。不含工具调用的流保持原始事件。`maxToolRounds` 限制回调轮数（默认 10 轮），`maxToolResponseBytes` 限制每个缓冲响应大小（默认 8 MiB）；达到轮数上限时未执行的调用原样返回给调用方。通过 fetch 传入 `AbortSignal` 可取消缓冲或阻止后续回调，已在运行的回调需自行处理取消。被截断的调用、畸形参数和超限流会在工具执行前失败。上游 HTTP 错误保留其状态码。OpenAI 工具循环要求只有一个 completion choice。自定义 provider 可通过 `LLMContentProvider` 上的 `streamingToolLoop` 接入。
+- **机器翻译的语义增强**：PII 标签上的可选性别和范围属性（`<PII type="PERSON" gender="male" id="1"/>`、`<PII type="LOCATION" scope="city" id="2"/>`）为下游系统保留语法上下文。
+- **稳定的外部标签 ID**：跨独立匿名化调用管理 PII 映射的调用方，可以通过 `existingPiiMap` 预置小写字母数字 ID。这允许 ID 由被遮盖的值派生（例如用带密钥的 HMAC），而不依赖每次调用的计数器。
 
 ```typescript
 const existingPiiMap = new Map([
@@ -137,9 +120,9 @@ const result = await anonymizer.anonymize(
 // → 'Email <PII type="EMAIL" id="a4f2c9d8e7b6q"/>'
 ```
 
-External IDs must match `[0-9a-z]+`. Decimal-only IDs retain their existing numeric behavior. Avoid IDs beginning with recognizer prefixes such as `case`, `file`, `ref`, or `ticket`, and avoid runs of seven or more digits; those shapes may themselves be detected as case IDs or phone numbers inside an inbound tag.
+外部 ID 必须匹配 `[0-9a-z]+`。纯数字 ID 保留现有的数字行为。避免以识别器前缀开头（`case`、`file`、`ref`、`ticket`）的 ID，也避免连续七位或更多数字——这些形态本身可能在传入的标签里被识别成 case ID 或电话号码。
 
-## Example: Full Round-Trip with Sessions
+## 示例：带会话的完整往返
 
 ```typescript
 import {
@@ -151,59 +134,58 @@ import {
 const keyProvider = new InMemoryKeyProvider();
 const anonymizer = createAnonymizer({
   ner: {
-    mode: 'quantized',              // ~280 MB model, auto-downloads on first use
-    caseFallback: true,             // detect lowercase names like "tom"
-    thresholds: { PERSON: 0.8 },   // require higher confidence for names
-    onStatus: console.log,          // log model download progress
+    mode: 'quantized',              // ~280 MB 模型，首次使用时自动下载
+    caseFallback: true,             // 检测 "tom" 这类小写名字
+    thresholds: { PERSON: 0.8 },   // 对人名要求更高置信度
+    onStatus: console.log,          // 打印模型下载进度
   },
-  semantic: { enabled: true },      // adds gender/scope attributes for MT
-  secrets: { enabled: true },       // detect API keys, JWTs, connection strings
+  semantic: { enabled: true },      // 为机器翻译添加性别/范围属性
+  secrets: { enabled: true },       // 检测 API Key、JWT、连接串
   keyProvider,
   piiStorageProvider: new SQLitePIIStorageProvider('./pii.db'),
 });
 
 const session = anonymizer.session('chat-123');
 
-// Message 1 — NER detects names and orgs, regex catches emails
+// 消息 1 — NER 检测人名和机构，正则捕获邮箱
 const r1 = await session.anonymize(
   'Tell John Smith at Acme Corp (john.smith@acme-corp.com) we accept the offer'
 );
 // → "Tell <PII type="PERSON" gender="male" id="1"/> at <PII type="ORG" id="2"/>
 //    (<PII type="EMAIL" id="3"/>) we accept the offer"
 
-// Message 2 — same entities keep their IDs across messages
+// 消息 2 — 同一实体跨消息保持 ID
 const r2 = await session.anonymize(
   'CC john.smith@acme-corp.com and loop in admin@acme-corp.com'
 );
 // → "CC <PII type="EMAIL" id="3"/> and loop in <PII type="EMAIL" id="4"/>"
 
-// Rehydrate any message — PII map is loaded from SQLite automatically
+// 还原任意消息 — PII 映射会自动从 SQLite 加载
 const original = await session.rehydrate(r2.anonymizedText);
 // → "CC john.smith@acme-corp.com and loop in admin@acme-corp.com"
 
 await anonymizer.dispose();
 ```
 
-## Packages
+## 地址识别说明
 
-| Package | Description |
-|---------|-------------|
-| [`rehydra`](https://www.npmjs.com/package/rehydra) | Core SDK — detect, anonymize, rehydrate |
-| [`@rehydra/opencode`](packages/opencode-plugin/) | OpenCode plugin — scrubs secrets before they reach LLM providers |
+默认正则注册表检测英国邮编语法和带门牌号的英文街道地址，例如 `34a Friskin Road`。当公寓标识与街道地址相邻时会被包含，例如 `Flat 1\n34a Friskin Road`。以邮编结尾的连续英国地址块会被整体遮盖为一个 `ADDRESS`；独立的邮编使用 `POSTAL_CODE`。裸公寓号、无门牌号的建筑以及其他国家的邮编格式需要自定义识别器或 NER。邮编匹配只检查语法，不验证该邮编当前是否仍在使用。
 
-## Documentation
+通过检测策略禁用 `ADDRESS` 或 `POSTAL_CODE` 即可关闭对应识别器。
 
-See the package READMEs:
+## 包
 
-- [Core SDK usage](README.md#library--embed-pii-anonymization-in-your-app)
-- [OpenCode plugin](packages/opencode-plugin/README.md)
+| 包 | 说明 |
+|---|---|
+| [`rehydra`](https://www.npmjs.com/package/rehydra) | 核心 SDK —— 检测、匿名化、还原 |
+| [`@rehydra/opencode`](packages/opencode-plugin/) | OpenCode 插件 —— 在密钥到达 LLM provider 前脱敏 |
+
+## 文档
+
+- [核心 SDK 用法](#作为库嵌入你的应用)
+- [OpenCode 插件](packages/opencode-plugin/README.md)
+- [English](README.en.md)
 
 ## License
 
 [MIT](LICENSE)
-
-### Address detection
-
-The default regex registry detects UK postcode syntax and numbered English-language street addresses such as `34a Friskin Road`. Apartment identifiers are included when adjacent to a street address, as in `Flat 1\n34a Friskin Road`. A contiguous UK address block ending in a postcode is masked as one `ADDRESS`; a standalone postcode uses `POSTAL_CODE`. Bare apartment numbers, unnumbered buildings, and other countries' postal formats need custom recognizers or NER. Postcode matching checks syntax, not whether a postcode is currently assigned.
-
-Disable `ADDRESS` or `POSTAL_CODE` through the detection policy to opt out of either recognizer.

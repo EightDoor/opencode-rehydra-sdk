@@ -3,7 +3,7 @@
 ## Getting Started
 
 ```bash
-git clone https://github.com/rehydra-ai/rehydra-sdk.git
+git clone https://github.com/EightDoor/opencode-rehydra-sdk.git
 cd rehydra-sdk
 npm install
 npm run build
@@ -71,7 +71,7 @@ npm run test:coverage
 
 ## Issues
 
-- Check [existing issues](https://github.com/rehydra-ai/rehydra-sdk/issues) before opening a new one
+- Check [existing issues](https://github.com/EightDoor/opencode-rehydra-sdk/issues) before opening a new one
 - Bug reports should include: steps to reproduce, expected vs actual behavior, and the Rehydra version
 - Feature requests are welcome — describe the use case, not just the solution
 - If you'd like to work on an issue, leave a comment so we can coordinate

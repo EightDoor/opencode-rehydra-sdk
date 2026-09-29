@@ -311,7 +311,7 @@ English, German, Spanish, French, Italian, Portuguese, Dutch, and more.
 
 ## Usage with rehydra
 
-See the [rehydra documentation](https://github.com/rehydra-ai/rehydra) for usage instructions.
+See the [rehydra documentation](https://github.com/EightDoor/opencode-rehydra-sdk) for usage instructions.
 
 ## License
 
@@ -320,7 +320,7 @@ MIT License - see the base model [{model_id}](https://huggingface.co/{model_id})
 ## Credits
 
 - Original model by [Davlan](https://huggingface.co/Davlan)
-- ONNX export by [rehydra.ai](https://github.com/rehydra-ai)
+- ONNX export by the Rehydra project (https://github.com/EightDoor/opencode-rehydra-sdk)
 """
 
 with open(f"{output_dir}/README.md", "w") as f:

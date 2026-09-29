@@ -740,7 +740,7 @@ describe('custom type round-trip (issue #68)', () => {
 });
 
 describe('alphanumeric tag ids (issue #91)', () => {
-  // Regression test for https://github.com/rehydra-ai/rehydra-sdk/issues/91
+  // Regression test for https://github.com/EightDoor/opencode-rehydra-sdk/issues/91
   // Callers may seed value-derived, lowercase alphanumeric ids through an
   // existing PII map. Those ids must survive anonymize → rehydrate, must not
   // be mangled by numeric recognizers, and must not disturb the numeric counter.
