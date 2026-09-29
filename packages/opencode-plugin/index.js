@@ -1,8 +1,7 @@
-// Load the built V2 SDK directly from the sibling dist/ directory so this
-// package can be dropped into OpenCode's plugin config without requiring an
-// npm install of the `rehydra` package. The relative path resolves to the
-// repository's compiled output (`../../dist/opencode-plugin/index.js`).
-const sdk = await import("../../dist/opencode-plugin/index.js");
+// Loads the published V2 SDK. Resolves to `opencode-rehydra-core`'s
+// `opencode-plugin` entry via its `exports` map, so the plugin works from an
+// npm install (no in-repo `dist/` required at runtime).
+const sdk = await import("opencode-rehydra-core/opencode-plugin");
 const sdkDefault = sdk.default;
 const sdkPlugin = sdk.plugin;
 const sdkCreate = sdk.createRehydraPlugin;

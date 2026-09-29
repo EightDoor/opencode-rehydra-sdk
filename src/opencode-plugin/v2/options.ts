@@ -12,6 +12,9 @@
  *   re-adding the opt-in secret types the anonymizer enables internally.
  */
 
+import { homedir } from "node:os";
+import { sep } from "node:path";
+
 import type { AnonymizerConfig } from "../../core/anonymizer.js";
 import {
   PIIType,
@@ -24,6 +27,53 @@ import type { PIITypeName, RehydraPluginOptions } from "../types.js";
 const DEFAULT_DISABLE_TYPES: PIITypeName[] = ["URL", "IP_ADDRESS"];
 const DEFAULT_ENV_FILES: string[] = ["**/.env*"];
 const DEFAULT_MIN_VALUE_LENGTH = 4;
+
+/**
+ * Resolves the canonical OpenCode config directory (`$XDG_CONFIG_HOME/opencode`
+ * or `$HOME/.config/opencode`). Returns `undefined` when neither location is
+ * usable. Honours `XDG_CONFIG_HOME` on every platform so distros overriding
+ * the spec keep working, and falls back to `~/.config/opencode` per the
+ * OpenCode XDG spec.
+ */
+export function opencodeConfigDirectory(
+  env: NodeJS.ProcessEnv = process.env,
+  homedirFn: () => string = homedir,
+): string | undefined {
+  const xdg = env.XDG_CONFIG_HOME;
+  if (typeof xdg === "string" && xdg.trim().length > 0) {
+    return joinPath(xdg, "opencode");
+  }
+  const home = env.HOME ?? env.USERPROFILE ?? homedirFn();
+  if (typeof home === "string" && home.trim().length > 0) {
+    return joinPath(home, ".config", "opencode");
+  }
+  return undefined;
+}
+
+/** Joins POSIX/Windows path segments without depending on `node:path.join`. */
+function joinPath(...segments: string[]): string {
+  return segments
+    .filter((segment) => segment.length > 0)
+    .join(sep)
+    .replace(new RegExp(`${sep}+`, "g"), sep);
+}
+
+/**
+ * Heuristic: returns `true` when `projectDir` is somewhere underneath (or equal
+ * to) `opencodeConfigDir`, so the project itself is *not* the OpenCode config
+ * directory and the env-file fallback below should kick in.
+ */
+export function shouldUseOpencodeConfigDir(
+  projectDir: string,
+  opencodeConfigDir: string,
+): boolean {
+  const normalized = (value: string): string =>
+    value.endsWith(sep) ? value : value + sep;
+  const a = normalized(projectDir);
+  const b = normalized(opencodeConfigDir);
+  if (a === b) return false;
+  return a.startsWith(b);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -60,14 +110,12 @@ function asTagFormat(value: unknown): TagFormat | undefined {
 
 function defaultSecretsConfig(
   options: RehydraPluginOptions,
-  envBaseDirectory: string,
 ): SecretsConfig {
   return {
     enabled: true,
     envFiles: options.envFiles ?? DEFAULT_ENV_FILES,
     redactValues: options.redactValues,
     minValueLength: options.minValueLength ?? DEFAULT_MIN_VALUE_LENGTH,
-    envBaseDirectory,
   };
 }
 
@@ -103,32 +151,50 @@ export function normalizePluginOptions(
   }
   normalized.anonymizer = isRecord(source.anonymizer)
     ? (source.anonymizer as AnonymizerConfig)
-    : { secrets: defaultSecretsConfig(normalized, ctxDirectory) };
+    : { secrets: defaultSecretsConfig(normalized) };
 
   return normalized;
 }
 
 /**
- * Resolves the anonymizer configuration, defaulting the secrets base directory
- * to the project directory when the caller did not set one.
+ * Resolves the anonymizer configuration.
+ *
+ * The base directory for `envFiles` paths is picked in this order:
+ * 1. `anonymizer.secrets.envBaseDirectory` if the user configured it.
+ * 2. The OpenCode config directory (`~/.config/opencode` on every supported
+ *    platform) — when the user has not configured their own `anonymizer`
+ *    block. This means a single `~/.config/opencode/.env` shared across all
+ *    projects works without per-project paths, while project-local discovery
+ *    stays opt-in by setting `secrets.envBaseDirectory` explicitly.
+ *
+ * 3. The project directory (final fallback).
  */
 export function anonymizerConfigFromOptions(
   options: RehydraPluginOptions,
   ctxDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+  homedirFn: () => string = homedir,
 ): AnonymizerConfig {
-  const base: AnonymizerConfig = options.anonymizer ?? {
-    secrets: defaultSecretsConfig(options, ctxDirectory),
-  };
+  const userProvided = options.anonymizer !== undefined;
+  const base: AnonymizerConfig = userProvided
+    ? options.anonymizer!
+    : { secrets: defaultSecretsConfig(options) };
 
   if (base.secrets === undefined) {
     return base;
   }
 
+  const envBaseDirectory = base.secrets.envBaseDirectory ?? (
+    userProvided
+      ? ctxDirectory
+      : (opencodeConfigDirectory(env, homedirFn) ?? ctxDirectory)
+  );
+
   return {
     ...base,
     secrets: {
       ...base.secrets,
-      envBaseDirectory: base.secrets.envBaseDirectory ?? ctxDirectory,
+      envBaseDirectory,
     },
   };
 }
