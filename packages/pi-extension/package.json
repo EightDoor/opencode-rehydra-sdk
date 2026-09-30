@@ -1,0 +1,61 @@
+{
+  "name": "@rehydra/pi-extension",
+  "version": "0.14.3",
+  "description": "Rehydra Pi extension — anonymizes secrets in Pi conversations via the ExtensionAPI.",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "imports": {
+    "#storage": {
+      "node": "./dist/utils/storage.js",
+      "default": "./dist/utils/storage.js"
+    },
+    "#onnx-runtime": {
+      "node": "./dist/ner/onnx-runtime.js",
+      "default": "./dist/ner/onnx-runtime.js"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "dist/",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "prepublishOnly": "node ./scripts/sync-dist.mjs"
+  },
+  "pi": {
+    "extensions": ["./dist/pi-extension/index.js"]
+  },
+  "keywords": [
+    "anonymization",
+    "pii",
+    "privacy",
+    "secrets",
+    "rehydra",
+    "pi",
+    "pi-extension",
+    "pi-package"
+  ],
+  "author": "EightDoor",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EightDoor/opencode-rehydra-sdk.git",
+    "directory": "packages/pi-extension"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3"
+  }
+}

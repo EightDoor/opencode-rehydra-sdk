@@ -63,6 +63,10 @@
     "./opencode-plugin": {
       "types": "./dist/opencode-plugin/index.d.ts",
       "default": "./dist/opencode-plugin/index.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension/index.d.ts",
+      "default": "./dist/pi-extension/index.js"
     }
   },
   "files": [
@@ -86,8 +90,9 @@
     "clean": "rm -rf dist",
     "publish:core": "npm run build && npm publish --access public",
     "publish:plugin": "npm run build && cd packages/opencode-plugin && npm publish --access public && cd ../..",
-    "publish:all": "npm run build && npm publish --access public && cd packages/opencode-plugin && npm publish --access public && cd ../..",
-    "pack:dry-run": "npm pack --dry-run && cd packages/opencode-plugin && npm pack --dry-run && cd ../..",
+    "publish:pi-extension": "npm run build && cd packages/pi-extension && npm publish --access public && cd ../..",
+    "publish:all": "npm run build && npm publish --access public && cd packages/opencode-plugin && npm publish --access public && cd ../.. && cd packages/pi-extension && npm publish --access public && cd ../..",
+    "pack:dry-run": "npm pack --dry-run && cd packages/opencode-plugin && npm pack --dry-run && cd ../.. && cd packages/pi-extension && npm pack --dry-run && cd ../..",
     "version:patch": "npm version patch -m \"%s\"",
     "version:minor": "npm version minor -m \"%s\"",
     "version:major": "npm version major -m \"%s\"",
@@ -103,7 +108,9 @@
     "ner",
     "onnx",
     "opencode",
-    "opencode-plugin"
+    "opencode-plugin",
+    "pi",
+    "pi-extension"
   ],
   "author": "EightDoor",
   "license": "MIT",

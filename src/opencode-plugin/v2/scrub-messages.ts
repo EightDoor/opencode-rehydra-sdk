@@ -1,344 +1,166 @@
 /**
- * Message scrubbing for OpenCode Plugin V2 session hooks.
+ * OpenCode Plugin V2 message scrubber.
  *
- * Walks the messages attached to a model request and anonymizes every string
- * that can carry secrets: user/assistant/reasoning text, tool arguments,
- * completed tool output, and V1-style part state.
+ * 把宿主无关的 {@link scrubCore} 适配到 OpenCode 的 `session.hook("context")`
+ * 事件载荷上：
+ * - 实现一个轻量 {@link OpencodeScrubHost}：负责抽取 shell 命令与 VCS
+ *   身份策略，并保持 `callID → command` 映射供后续 `tool-result` 反查。
+ * - 复用 OpenCode Plugin V2 的 {@link V2Logger} 作为 HostLogger。
  *
- * The scrub runs on a deep copy; only after it completes successfully are the
- * results written back into the caller's original objects (preserving the
- * references Plugin V2 relies on). If any step throws, the originals are left
- * untouched and the error propagates so the caller can block the request
- * instead of leaking raw PII (fail-closed).
+ * 深克隆 + 全程成功才回写仍由共享核心负责；任何异常会向上抛出，由
+ * `register-hooks.ts` 失败关闭。
  */
-
 import { PIIType } from "../../types/index.js";
 import type {
   AnonymizationPolicy,
   AnonymizationResult,
 } from "../../types/index.js";
 import { vcsCommandTypes } from "../vcs-command.js";
-import type { AnonymizationState } from "./anon-state.js";
 import type {
-  Message,
-  MessagePart,
-  MessagePartState,
-  ScrubContext,
-  SessionResolver,
-} from "./types.js";
+  ScrubCoreOptions,
+  ScrubCoreStats,
+  ScrubHost,
+  ScrubMessage,
+} from "../../host-agnostic/scrub.js";
+import { scrubCore } from "../../host-agnostic/scrub.js";
 import type { AnonymizerSessionImpl } from "../../storage/session-base.js";
+import type { ScrubContext, V2Logger } from "./types.js";
+import { AnonymizationState } from "./anon-state.js";
 
+/** OpenCode plugin 的 scrub 配置。 */
 export interface ScrubMessagesOptions {
-  /** Locale hint passed to `anonymize()`; defaults to the plugin option. */
+  /** Locale hint passed to `anonymize()`. */
   locale?: string;
   /** Base policy (URL/IP disabled by default). */
   policy?: Partial<AnonymizationPolicy>;
   /** Whether the VCS identity recognizers are enabled. */
   vcsIdentities: boolean;
-  /** Builds the extended policy that enables identity types for a VCS output. */
-  identityPolicy: (types: PIIType[]) => Partial<AnonymizationPolicy>;
+  /**
+   * Returns the policy override that enables identity types for a VCS output.
+   * The base policy is supplied so the override can merge with it.
+   */
+  identityPolicy(types: PIIType[]): Partial<AnonymizationPolicy>;
 }
 
+/** 单次 scrub 的结果。 */
 export interface ScrubResult {
   /** Entities anonymized during this call. */
   scrubbed: number;
   byType: Record<string, number>;
 }
 
-/** Reads a shell command from a tool input object, if present. */
-function extractCommand(input: unknown): string | undefined {
-  if (input === null || typeof input !== "object") return undefined;
-  const command = (input as { command?: unknown }).command;
-  return typeof command === "string" ? command : undefined;
-}
-
-/** Resolves the session ID carried by a message, for diagnostic logging only. */
-function messageSessionID(message: Message): string | undefined {
-  const info = message.info;
-  if (info !== undefined && info !== null && typeof info === "object") {
-    const sessionID = info.sessionID;
-    if (typeof sessionID === "string" && sessionID.length > 0) return sessionID;
-  }
-  const sessionID = message.sessionID;
-  if (typeof sessionID === "string" && sessionID.length > 0) return sessionID;
-  return undefined;
-}
-
-/** Deep-clones a JSON-like value (message payloads contain no class instances). */
-function deepClone<T>(value: T): T {
-  if (Array.isArray(value)) {
-    const items = value as unknown[];
-    return items.map((item) => deepClone(item)) as unknown as T;
-  }
-  if (value !== null && typeof value === "object") {
-    const source = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(source)) {
-      out[key] = deepClone(item);
-    }
-    return out as T;
-  }
-  return value;
-}
-
 /**
- * Copies the fields the scrubber mutates from a scrubbed part back onto the
- * original part, keeping the original object identities intact.
- */
-function restorePart(
-  original: MessagePart | undefined,
-  scrubbed: MessagePart | undefined,
-): void {
-  if (
-    original === undefined ||
-    original === null ||
-    scrubbed === undefined ||
-    scrubbed === null
-  ) {
-    return;
-  }
-  original.text = scrubbed.text;
-  original.input = scrubbed.input;
-  original.result = scrubbed.result;
-  restorePartState(original.state, scrubbed.state);
-}
-
-/** Copies mutable tool-state fields back onto the original part state. */
-function restorePartState(
-  original: MessagePartState | undefined,
-  scrubbed: MessagePartState | undefined,
-): void {
-  if (
-    original === undefined ||
-    original === null ||
-    scrubbed === undefined ||
-    scrubbed === null
-  ) {
-    return;
-  }
-  original.input = scrubbed.input;
-  original.error = scrubbed.error;
-  original.output = scrubbed.output;
-}
-
-/** Applies scrub results from `source` back onto the original message parts. */
-function restoreScrubbedParts(
-  originalMessages: Message[],
-  scrubbedMessages: Message[],
-): void {
-  for (let index = 0; index < originalMessages.length; index++) {
-    const original = originalMessages[index];
-    const scrubbed = scrubbedMessages[index];
-    if (
-      original === undefined ||
-      original === null ||
-      scrubbed === undefined ||
-      scrubbed === null
-    ) {
-      continue;
-    }
-    restorePartArray(original.content, scrubbed.content);
-    restorePartArray(original.parts, scrubbed.parts);
-  }
-}
-
-function restorePartArray(
-  originalParts: MessagePart[] | undefined,
-  scrubbedParts: MessagePart[] | undefined,
-): void {
-  if (!Array.isArray(originalParts) || !Array.isArray(scrubbedParts)) {
-    return;
-  }
-  const length = Math.min(originalParts.length, scrubbedParts.length);
-  for (let index = 0; index < length; index++) {
-    restorePart(originalParts[index], scrubbedParts[index]);
-  }
-}
-
-/**
- * Anonymizes the messages of a session request in place.
+ * OpenCode 适配的 {@link ScrubHost}。
  *
- * @returns the number of entities removed and a per-type breakdown for logging.
+ * - 命令抽取委托给 OpenCode 的 `vcsCommandTypes`（参考原 plugin）。
+ * - 身份策略通过 `options.identityPolicy` 构造；`bindIdentityPolicy`
+ *   在 `scrubMessages` 入口处注入 builder。
  */
-export async function scrubMessages(
-  eventMessages: Message[],
-  ctx: ScrubContext,
-  resolveSession: SessionResolver,
-  state: AnonymizationState,
-  options: ScrubMessagesOptions,
-): Promise<ScrubResult> {
-  let scrubbed = 0;
-  const byType: Record<string, number> = {};
+class OpencodeScrubHost implements ScrubHost {
+  readonly sessionID: string;
+  readonly log: V2Logger;
 
-  const record = (result: AnonymizationResult): void => {
-    if (result.stats.totalEntities <= 0) return;
-    state.hasAnonymized = true;
-    scrubbed += result.stats.totalEntities;
-    for (const [type, count] of Object.entries(result.stats.countsByType)) {
-      byType[type] = (byType[type] ?? 0) + count;
-    }
-  };
+  /** `tool-call.id` → 抽取的 shell 命令，供后续 `tool-result` 反查。 */
+  private readonly commandByCallID = new Map<string, string>();
 
-  // Recursively anonymize a value. Object keys are preserved so execution
-  // arguments and JSON property names stay intact.
-  const scrubValue = async (
-    value: unknown,
-    session: AnonymizerSessionImpl,
-    policy: Partial<AnonymizationPolicy> | undefined,
-  ): Promise<unknown> => {
-    if (typeof value === "string") {
-      const result = await session.anonymize(value, options.locale, policy);
-      record(result);
-      return result.anonymizedText;
-    }
-    if (Array.isArray(value)) {
-      const items = value as unknown[];
-      const out: unknown[] = [];
-      for (const item of items) {
-        out.push(await scrubValue(item, session, policy));
-      }
-      return out;
-    }
-    if (value !== null && typeof value === "object") {
-      const source = value as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(source)) {
-        out[key] = await scrubValue(item, session, policy);
-      }
-      return out;
-    }
-    return value;
-  };
+  constructor(sessionID: string, logger: V2Logger) {
+    this.sessionID = sessionID;
+    this.log = logger;
+  }
 
-  // Tool call id → shell command, so a later `tool-result` can use the identity
-  // policy its matching `tool-call` requires.
-  const commandByCallID = new Map<string, string>();
+  extractCommand(input: unknown): string | undefined {
+    if (input === null || typeof input !== "object") return undefined;
+    const candidate = (input as { command?: unknown }).command;
+    return typeof candidate === "string" ? candidate : undefined;
+  }
 
-  const policyForCommand = (
-    command: unknown,
-  ): Partial<AnonymizationPolicy> | undefined => {
-    if (!options.vcsIdentities || typeof command !== "string") return undefined;
+  commandForPart(callID: string | undefined): string | undefined {
+    if (callID === undefined) return undefined;
+    return this.commandByCallID.get(callID);
+  }
+
+  recordCommand(callID: string | undefined, command: string | undefined): void {
+    if (callID === undefined || command === undefined) return;
+    this.commandByCallID.set(callID, command);
+  }
+
+  applyIdentityPolicy(
+    base: Partial<AnonymizationPolicy> | undefined,
+    command: string | undefined,
+  ): Partial<AnonymizationPolicy> {
+    if (command === undefined) return base ?? {};
     const commands = vcsCommandTypes(command);
     const types: PIIType[] = [];
     if (commands.has("github")) types.push(PIIType.GITHUB_USERNAME);
     if (commands.has("git")) types.push(PIIType.PERSON);
-    if (types.length === 0) return undefined;
-    return options.identityPolicy(types);
-  };
-
-  const commandFor = (part: MessagePart): string | undefined => {
-    const callID = part.callID ?? part.id;
-    if (callID === undefined) return undefined;
-    return commandByCallID.get(callID);
-  };
-
-  const scrubPart = async (
-    part: MessagePart,
-    session: AnonymizerSessionImpl,
-  ): Promise<void> => {
-    // V1-style part state (kept so the scrubber works for both message shapes).
-    const partState = part.state;
-    if (
-      partState !== undefined &&
-      partState !== null &&
-      typeof partState === "object"
-    ) {
-      if (partState.input !== undefined) {
-        const command = extractCommand(partState.input);
-        if (command !== undefined) {
-          commandByCallID.set(part.callID ?? part.id ?? "", command);
-        }
-        partState.input = await scrubValue(partState.input, session, options.policy);
-      }
-      if (typeof partState.error === "string") {
-        partState.error = (await scrubValue(
-          partState.error,
-          session,
-          options.policy,
-        )) as string;
-      }
-      if (partState.status === "completed" && typeof partState.output === "string") {
-        const command = extractCommand(partState.input) ?? commandFor(part);
-        const policyOverride = policyForCommand(command) ?? options.policy;
-        partState.output = (await scrubValue(
-          partState.output,
-          session,
-          policyOverride,
-        )) as string;
-      }
-    }
-
-    // V2 tool arguments.
-    if (part.type === "tool-call" && part.input !== undefined) {
-      const command = extractCommand(part.input);
-      if (command !== undefined && part.id !== undefined) {
-        commandByCallID.set(part.id, command);
-      }
-      part.input = await scrubValue(part.input, session, options.policy);
-    }
-
-    // V2 tool output.
-    if (part.type === "tool-result" && part.result !== undefined) {
-      const command = extractCommand(part.input) ?? commandFor(part);
-      const policyOverride = policyForCommand(command) ?? options.policy;
-      part.result = await scrubValue(part.result, session, policyOverride);
-    }
-
-    // Any textual part (text, reasoning, compaction).
-    if (typeof part.text === "string") {
-      const result = await session.anonymize(part.text, options.locale, options.policy);
-      record(result);
-      part.text = result.anonymizedText;
-    }
-  };
-
-  // Scrub a deep copy first; the originals are only touched after the whole
-  // pass succeeds, so a mid-way failure cannot send partially scrubbed PII.
-  const workingMessages = deepClone(eventMessages);
-  const session = resolveSession(ctx.sessionID);
-
-  for (const message of workingMessages) {
-    if (message === null || typeof message !== "object") continue;
-    const messageSession = messageSessionID(message);
-    if (messageSession !== undefined && messageSession !== ctx.sessionID) {
-      ctx.logger.debug("message sessionID differs from event sessionID", {
-        eventSessionID: ctx.sessionID,
-        messageSessionID: messageSession,
-      });
-    }
-
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (part !== null && typeof part === "object") {
-          await scrubPart(part, session);
-        }
-      }
-    }
-    if (Array.isArray(message.parts)) {
-      for (const part of message.parts) {
-        if (part !== null && typeof part === "object") {
-          await scrubPart(part, session);
-        }
-      }
-    }
+    if (types.length === 0) return base ?? {};
+    const builder = this.identityPolicyBuilder;
+    if (builder === undefined) return base ?? {};
+    return builder(types);
   }
 
-  restoreScrubbedParts(eventMessages, workingMessages);
+  private identityPolicyBuilder?: (types: PIIType[]) => Partial<AnonymizationPolicy>;
 
-  if (scrubbed > 0) {
-    const nonZero: Record<string, number> = {};
-    for (const [type, count] of Object.entries(byType)) {
-      if (count > 0) nonZero[type] = count;
-    }
-    ctx.logger.info(`scrubbed ${scrubbed} secret(s) from messages`, {
-      scrubbed: nonZero,
-      messageCount: eventMessages.length,
-    });
-  } else {
-    ctx.logger.debug("no secrets found in messages", {
-      messageCount: eventMessages.length,
-    });
+  /** `scrubMessages` 入口处注入 builder。 */
+  bindIdentityPolicy(
+    builder: (types: PIIType[]) => Partial<AnonymizationPolicy>,
+  ): void {
+    this.identityPolicyBuilder = builder;
+  }
+}
+
+/**
+ * Anonymizes the messages of an OpenCode session request in place.
+ *
+ * 与原 plugin 行为一致：
+ * - 深克隆出工作副本；
+ * - 整个流程成功后才把改动写回；
+ * - 任何失败向上抛出，由调用方 fail-closed。
+ */
+export async function scrubMessages(
+  eventMessages: unknown[],
+  ctx: ScrubContext,
+  resolveSession: (sessionID: string) => AnonymizerSessionImpl,
+  state: AnonymizationState,
+  options: ScrubMessagesOptions,
+): Promise<ScrubResult> {
+  const host = new OpencodeScrubHost(ctx.sessionID, ctx.logger);
+  // 用箭头函数包裹，避免直接把方法引用绑定到 host（ESLint unbound-method）。
+  host.bindIdentityPolicy((types) => options.identityPolicy(types));
+
+  // 把 `eventMessages` 视为 ScrubMessage 列表：OpenCode 的实际字段名是
+  // `content` / `parts` / `info`，与 ScrubMessage 完全一致。
+  const messages: ScrubMessage[] = eventMessages as ScrubMessage[];
+
+  const scrubOptions: ScrubCoreOptions = {
+    locale: options.locale,
+    policy: options.policy,
+  };
+
+  const result: ScrubCoreStats = await scrubCore(
+    messages,
+    resolveSession(ctx.sessionID),
+    host,
+    scrubOptions,
+  );
+
+  if (result.scrubbed > 0) {
+    state.hasAnonymized = true;
   }
 
-  return { scrubbed, byType };
+  return { scrubbed: result.scrubbed, byType: result.byType };
+}
+
+/** 重新导出共享类型，便于 OpenCode plugin 内部继续引用。 */
+export type { ScrubMessage } from "../../host-agnostic/scrub.js";
+
+/** 辅助：构造一个与原 plugin 等价的 `AnonymizationResult.stats` 视图。 */
+export function toAnonymizationStats(stats: ScrubResult): AnonymizationResult["stats"] {
+  return {
+    totalEntities: stats.scrubbed,
+    countsByType: stats.byType as AnonymizationResult["stats"]["countsByType"],
+    modelVersion: "host-agnostic",
+    policyVersion: "host-agnostic",
+    processingTimeMs: 0,
+  };
 }
