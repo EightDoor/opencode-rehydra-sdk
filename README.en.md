@@ -179,7 +179,7 @@ Disable `ADDRESS` or `POSTAL_CODE` through the detection policy to opt out of ei
 |---------|-------------|
 | [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core) | Core SDK — detect, anonymize, rehydrate |
 | [`opencode-rehydar`](packages/opencode-plugin/) | OpenCode plugin — scrubs secrets before they reach LLM providers |
-| [`@rehydra/pi-extension`](packages/pi-extension/) | Pi extension — anonymizes PII inside Pi via the ExtensionAPI |
+| [`rehydra-pi`](packages/pi-extension/) | Pi extension — anonymizes PII inside Pi via the ExtensionAPI |
 
 ## Documentation
 

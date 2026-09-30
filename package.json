@@ -93,6 +93,7 @@
     "publish:pi-extension": "npm run build && cd packages/pi-extension && npm publish --access public && cd ../..",
     "publish:all": "npm run build && npm publish --access public && cd packages/opencode-plugin && npm publish --access public && cd ../.. && cd packages/pi-extension && npm publish --access public && cd ../..",
     "pack:dry-run": "npm pack --dry-run && cd packages/opencode-plugin && npm pack --dry-run && cd ../.. && cd packages/pi-extension && npm pack --dry-run && cd ../..",
+    "version": "node scripts/sync-versions.mjs",
     "version:patch": "npm version patch -m \"%s\"",
     "version:minor": "npm version minor -m \"%s\"",
     "version:major": "npm version major -m \"%s\"",

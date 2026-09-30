@@ -13,8 +13,8 @@
         },
         {
           "type": "json",
-          "path": "packages/opencode-plugin/package.json",
-          "jsonpath": "$.dependencies.opencode-rehydra-core"
+          "path": "packages/pi-extension/package.json",
+          "jsonpath": "$.version"
         }
       ]
     }

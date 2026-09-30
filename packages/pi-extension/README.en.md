@@ -1,4 +1,4 @@
-# @rehydra/pi-extension
+# rehydra-pi
 
 Scrub detected secrets from Pi conversations before the main LLM request.
 
@@ -13,7 +13,7 @@ Detection and rehydration are local. The model only sees placeholders; your tool
 ## Install
 
 ```bash
-pi install npm:@rehydra/pi-extension
+pi install npm:rehydra-pi
 ```
 
 Pi writes the package entry to `~/.pi/agent/settings.json`. Edit that file to add extension options:
@@ -22,7 +22,7 @@ Pi writes the package entry to `~/.pi/agent/settings.json`. Edit that file to ad
 {
   "packages": [
     {
-      "source": "npm:@rehydra/pi-extension"
+      "source": "npm:rehydra-pi"
     }
   ],
   "rehydra": {

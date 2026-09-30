@@ -1,4 +1,4 @@
-# @rehydra/pi-extension
+# rehydra-pi
 
 在主 LLM 请求发出之前，脱敏 Pi 对话中检测到的密钥。
 
@@ -13,7 +13,7 @@
 ## 安装
 
 ```bash
-pi install npm:@rehydra/pi-extension
+pi install npm:rehydra-pi
 ```
 
 Pi 会在 `~/.pi/agent/settings.json` 写入包声明。然后编辑该文件添加扩展配置：
@@ -22,7 +22,7 @@ Pi 会在 `~/.pi/agent/settings.json` 写入包声明。然后编辑该文件添
 {
   "packages": [
     {
-      "source": "npm:@rehydra/pi-extension"
+      "source": "npm:rehydra-pi"
     }
   ],
   "rehydra": {

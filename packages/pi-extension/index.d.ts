@@ -1,5 +1,5 @@
 /**
- * Type entry for the published `@rehydra/pi-extension` package.
+ * Type entry for the published `rehydra-pi` package.
  *
  * Types are re-exported from the SDK build output, so they always match the
  * implementation that Pi loads at runtime.
