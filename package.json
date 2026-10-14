@@ -1,6 +1,6 @@
 {
   "name": "rehydra",
-  "version": "0.15.0",
+  "version": "1.0.0",
   "description": "Rehydra on-device PII anonymization core — private build project; the published package is pi-rehydra.",
   "private": true,
   "main": "dist/index.js",
