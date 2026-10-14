@@ -1,19 +1,12 @@
 /**
- * 宿主无关的 Rehydra 扩展选项规范化。
+ * Rehydra 扩展选项规范化（Pi 扩展使用）。
  *
- * 提供给 OpenCode 插件与 Pi 扩展共用的：
  * - `normalizeRehydraOptions(raw)` —— 校验未知 / 畸形字段，落回默认值；
- * - `anonymizerConfigFromOptions(options, ctxDirectory, ...)` —— 在 `anonymizer`
+ * - `anonymizerConfigFromOptions(options, ctxDirectory)` —— 在 `anonymizer`
  *   与 `envFiles` 之间建立关联，给 `secrets.envBaseDirectory` 一个默认根；
  * - `policyFromOptions(options)` —— 处理 `disableTypes`，重新打开 secret 类型；
- * - `RehydraSharedOptions` —— 描述共同字段。
- *
- * 唯一宿主相关的差异是 `anonymizerConfigFromOptions` 是否在用户未配置
- * `anonymizer` 时改用 `opencodeConfigDirectory` 作为根；Pi 扩展调用方通过
- * `hostConfigDirectory` 回调传入 `/dev/null` 或别的合理默认。
+ * - `RehydraSharedOptions` —— 选项字段集合。
  */
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 import type { AnonymizerConfig } from "../core/anonymizer.js";
 import {
@@ -27,7 +20,7 @@ import type {
   TagFormat,
 } from "../types/index.js";
 
-/** 字符串形式的 PII 类型名（与 OpenCode plugin 一致）。 */
+/** 字符串形式的 PII 类型名。 */
 export type PIITypeName = `${PIIType}`;
 
 export const DEFAULT_DISABLE_TYPES: PIITypeName[] = ["URL", "IP_ADDRESS"];
@@ -120,17 +113,11 @@ export function normalizeRehydraOptions(raw: unknown): RehydraSharedOptions {
  *
  * 优先级：
  * 1. 用户显式配置的 `anonymizer.secrets.envBaseDirectory`；
- * 2. 用户没显式配置 `anonymizer` 时，宿主传入的 `hostConfigDirectory`
- *    （OpenCode 默认 `~/.config/opencode`，Pi 扩展默认 `cwd`）；
- * 3. 用户显式配置了 `anonymizer` 但没设根时，回退到 `ctxDirectory`；
- * 4. `ctxDirectory` 始终作为兜底根。
+ * 2. 其余情况回退到 `ctxDirectory`（Pi 扩展传入当前 `cwd`）。
  */
 export function anonymizerConfigFromOptions(
   options: RehydraSharedOptions,
   ctxDirectory: string,
-  hostConfigDirectory?: string,
-  env: NodeJS.ProcessEnv = process.env,
-  homedirFn: () => string = homedir,
 ): AnonymizerConfig {
   const userProvided = options.anonymizer !== undefined;
   const base: AnonymizerConfig = userProvided
@@ -141,11 +128,7 @@ export function anonymizerConfigFromOptions(
     return base;
   }
 
-  const envBaseDirectory = base.secrets.envBaseDirectory ?? (
-    userProvided
-      ? ctxDirectory
-      : (hostConfigDirectory ?? resolveDefaultHostConfigDir(env, homedirFn) ?? ctxDirectory)
-  );
+  const envBaseDirectory = base.secrets.envBaseDirectory ?? ctxDirectory;
 
   return {
     ...base,
@@ -156,23 +139,6 @@ export function anonymizerConfigFromOptions(
   };
 }
 
-/** 默认宿主配置目录（按 OpenCode 的 XDG 规则解析）。 */
-function resolveDefaultHostConfigDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homedirFn: () => string = homedir,
-): string | undefined {
-  const xdg = env.XDG_CONFIG_HOME;
-  if (typeof xdg === "string" && xdg.trim().length > 0) {
-    return join(xdg, "opencode");
-  }
-  const candidates = [env.HOME, env.USERPROFILE, homedirFn()];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return join(candidate, ".config", "opencode");
-    }
-  }
-  return undefined;
-}
 
 /** 处理 `disableTypes` 并重新打开 secret 类型。 */
 export function policyFromOptions(

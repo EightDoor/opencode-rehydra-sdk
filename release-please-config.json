@@ -8,11 +8,6 @@
       "extra-files": [
         {
           "type": "json",
-          "path": "packages/opencode-plugin/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
           "path": "packages/pi-extension/package.json",
           "jsonpath": "$.version"
         }

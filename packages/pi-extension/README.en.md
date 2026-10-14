@@ -1,4 +1,4 @@
-# rehydra-pi
+# pi-rehydra
 
 Scrub detected secrets from Pi conversations before the main LLM request.
 
@@ -13,7 +13,7 @@ Detection and rehydration are local. The model only sees placeholders; your tool
 ## Install
 
 ```bash
-pi install npm:rehydra-pi
+pi install npm:pi-rehydra
 ```
 
 Pi writes the package entry to `~/.pi/agent/settings.json`. Edit that file to add extension options:
@@ -22,7 +22,7 @@ Pi writes the package entry to `~/.pi/agent/settings.json`. Edit that file to ad
 {
   "packages": [
     {
-      "source": "npm:rehydra-pi"
+      "source": "npm:pi-rehydra"
     }
   ],
   "rehydra": {
@@ -32,7 +32,7 @@ Pi writes the package entry to `~/.pi/agent/settings.json`. Edit that file to ad
 }
 ```
 
-Every key under `rehydra` maps to the same-named option on [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core). `envFiles` defaults to `["**/.env*"]`, skipping `node_modules`, `.git`, and symlinks.
+Every key under `rehydra` is an extension option: `envFiles`, `redactValues`, `minValueLength`, `disableTypes`, `locale`, `vcsIdentities`, `policy`, `anonymizer`, `tagFormat`. `envFiles` defaults to `["**/.env*"]`, skipping `node_modules`, `.git`, and symlinks.
 
 ## How it works
 

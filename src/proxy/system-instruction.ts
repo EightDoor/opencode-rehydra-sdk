@@ -4,7 +4,7 @@
  * Injected into the system prompt when anonymization produces PII replacements,
  * telling the model to treat PII placeholders as opaque pass-through values.
  *
- * Shared between the proxy layer and the OpenCode plugin.
+ * Shared between the proxy layer and the Pi extension.
  */
 
 import type { TagFormat } from "../types/index.js";

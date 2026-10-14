@@ -287,7 +287,7 @@ export interface AnonymizerConfig {
    * Optional callback for validation warnings emitted during anonymization.
    * When not provided, warnings are silently ignored.
    * Previously these were logged via console.warn, which pollutes stdout
-   * in TUI-based editors (e.g. OpenCode).
+   * in TUI-based editors.
    */
   onValidationWarning?: (warnings: Array<{ code: string; message: string }>) => void;
 

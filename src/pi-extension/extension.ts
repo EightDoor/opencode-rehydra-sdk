@@ -11,7 +11,7 @@
  * - `input` / `user_bash` 在源头做最低限度的脱敏，避免走特殊路径的 PII 漏出。
  *
  * 设计目标：
- * - 复用 {@link scrubCore}，与 OpenCode 插件保持一致行为；
+ * - 复用 {@link scrubCore} 递归处理消息树；
  * - 失败关闭：任何 scrub 异常都向上抛出，Pi 会停在该请求而不是泄漏；
  * - 资源释放：`session_shutdown` 幂等释放 session 注册表与匿名器；
  * - 暴露 `/rehydra` 命令，便于用户在交互模式快速查看当前配置。
@@ -49,9 +49,9 @@ import {
 } from "../host-agnostic/normalize-options.js";
 import { buildTagPrefix } from "../utils/regex.js";
 import { buildPIISystemInstruction } from "../proxy/system-instruction.js";
-import { githubUsernameRecognizer } from "../opencode-plugin/github-username.js";
-import { gitIdentityRecognizer } from "../opencode-plugin/git-identity.js";
-import { protectIdentityTags } from "../opencode-plugin/identity-recognizer.js";
+import { githubUsernameRecognizer } from "./github-username.js";
+import { gitIdentityRecognizer } from "./git-identity.js";
+import { protectIdentityTags } from "./identity-recognizer.js";
 import {
   scrubCore,
   type ScrubCoreOptions,
@@ -134,7 +134,7 @@ function buildScrubHost(state: PiExtensionState): ScrubHost {
     ): Partial<AnonymizationPolicy> {
       if (command === undefined) return base ?? state.policy;
       const types: PIIType[] = [];
-      // 复用 OpenCode 的 vcsCommandTypes 启发式判断。
+      // 简化启发式：命令中出现 git / gh 即视为 VCS 上下文。
       if (/^(?:.*\s)?(?:git|gh)\b/.test(command)) {
         // git 走 PERSON；gh 走 GITHUB_USERNAME。两个都启用即可，由 recognizer
         // 各自按结构化字段匹配，不会冲突。
@@ -146,7 +146,7 @@ function buildScrubHost(state: PiExtensionState): ScrubHost {
   };
 }
 
-/** Pi 扩展运行时不暴露 logger 通道，统一走 console.warn 兜底（与 OpenCode 兼容）。 */
+/** Pi 扩展运行时不暴露 logger 通道，统一走 console.warn 兜底。 */
 function createConsoleLogger(): ScrubHost["log"] {
   const emit = (
     level: "debug" | "info" | "warn" | "error",
@@ -154,7 +154,7 @@ function createConsoleLogger(): ScrubHost["log"] {
     extra?: Record<string, unknown>,
   ): void => {
     const suffix = extra === undefined ? "" : ` extra=${JSON.stringify(extra)}`;
-    const line = `service=rehydra-pi level=${level} message=${message}${suffix}`;
+    const line = `service=pi-rehydra level=${level} message=${message}${suffix}`;
     if (level === "error") {
       // eslint-disable-next-line no-console
       console.error(line);
@@ -203,11 +203,13 @@ function normalizeMessagesForScrub(messages: AgentMessage[]): MessageRewrite {
 }
 
 /**
- * scrub 后把 parts 改动写回到 AgentMessage。
+ * scrub 后把 parts 改动写回到 AgentMessage，保持 Pi 原始 content 结构。
  *
- * - 普通 message：走 `agentMessageToScrub` 的逆向映射（assistant / toolResult
- *   的 content 已是数组，scrubCore 会按 parts 写回）；
- * - user string content：取 scrub 后 parts 的第一段 text 还原回字符串。
+ * - user string content：取 scrub 后第一段 text 还原回字符串；
+ * - toolResult：scrub 侧逐 text 块收集为文本数组，还原时按块索引逐块写回，
+ *   多轮往返稳定（不合并、不压平）；
+ * - 其余（user / assistant 数组 content）：parts 与原始 content 元素一一对应，
+ *   按块类型回写 text / thinking / toolCall.arguments。
  */
 function restoreMessagesFromScrub(
   originals: AgentMessage[],
@@ -215,7 +217,7 @@ function restoreMessagesFromScrub(
   userStringContent: Map<number, { original: string }>,
 ): void {
   scrubbed.forEach((scrub, index) => {
-    const original = originals[index] as { content?: unknown };
+    const original = originals[index] as { role?: string; content?: unknown };
     if (userStringContent.has(index)) {
       const firstPart = scrub.content?.[0];
       if (
@@ -227,13 +229,48 @@ function restoreMessagesFromScrub(
       }
       return;
     }
-    const scrubContent = scrub.content;
-    if (Array.isArray(scrubContent)) {
-      original.content = scrubContent;
+    const parts = scrub.content;
+    if (!Array.isArray(parts)) return;
+    const originalContent = original.content;
+    if (!Array.isArray(originalContent)) return;
+
+    if (original.role === "toolResult") {
+      const restored = parts.find((part) => part.type === "tool-result")?.result;
+      if (!Array.isArray(restored)) return;
+      const textBlocks = originalContent.filter(
+        (block): block is Record<string, unknown> =>
+          block !== null &&
+          typeof block === "object" &&
+          (block as { type?: unknown }).type === "text",
+      );
+      // result 与 text 块逐块对应（scrub 侧逐块收集），按索引写回保证往返稳定。
+      restored.forEach((value, i) => {
+        const block = textBlocks[i];
+        if (block !== undefined && typeof value === "string") {
+          block.text = value;
+        }
+      });
+      return;
     }
+
+    originalContent.forEach((block, i) => {
+      const part = parts[i];
+      if (part === undefined || block === null || typeof block !== "object") return;
+      writeScrubbedBlock(block as Record<string, unknown>, part);
+    });
   });
 }
 
+/** 把单个 scrub part 的结果写回对应的 Pi content 块，不改变块结构。 */
+function writeScrubbedBlock(block: Record<string, unknown>, part: ScrubPart): void {
+  if (block.type === "text" && typeof part.text === "string") {
+    block.text = part.text;
+  } else if (block.type === "thinking" && typeof part.text === "string") {
+    block.thinking = part.text;
+  } else if (block.type === "toolCall" && part.type === "tool-call") {
+    block.arguments = part.input;
+  }
+}
 function agentMessageToScrub(message: AgentMessage): ScrubMessage {
   const role = (message as { role?: string }).role;
   if (role === "user") {
@@ -260,9 +297,14 @@ function agentMessageToScrub(message: AgentMessage): ScrubMessage {
   if (role === "toolResult") {
     const toolCallId = (message as { toolCallId?: string }).toolCallId;
     const content = (message as { content?: unknown }).content;
-    const parts: ScrubPart[] = [];
+    // 逐 text 块收集为文本数组：scrubValue 会递归逐串脱敏，回写可逐块还原，
+    // 多轮往返保持不动点（不 join、不压平）。
+    const texts: string[] = [];
     if (Array.isArray(content)) {
-      for (const c of content) parts.push(textPartFromContent(c));
+      for (const c of content) {
+        const part = textPartFromContent(c);
+        if (typeof part.text === "string") texts.push(part.text);
+      }
     }
     return {
       content: [
@@ -270,7 +312,7 @@ function agentMessageToScrub(message: AgentMessage): ScrubMessage {
           type: "tool-result",
           id: toolCallId,
           callID: toolCallId,
-          result: combineTextContent(content),
+          result: texts,
         },
       ],
     };
@@ -310,21 +352,6 @@ function assistantBlockToPart(block: unknown): ScrubPart {
   return {};
 }
 
-function combineTextContent(content: unknown): unknown {
-  if (!Array.isArray(content)) return content;
-  const parts: string[] = [];
-  for (const item of content) {
-    if (item !== null && typeof item === "object") {
-      const obj = item as Record<string, unknown>;
-      if (obj.type === "text" && typeof obj.text === "string") {
-        parts.push(obj.text);
-      }
-    }
-  }
-  if (parts.length === 0) return content;
-  if (parts.length === 1) return parts[0];
-  return parts.join("\n");
-}
 
 /** 暴露给 Pi 的脱敏 / 还原入口。 */
 export interface RehydraPiHandle {
@@ -367,21 +394,19 @@ export function createRehydraPiExtension(pi: ExtensionAPI): void {
       keyProvider,
       piiStorageProvider: piiStorage,
     });
+    const tagFormat =
+      anonymizerConfig.tagFormat ??
+      options.tagFormat ?? { open: "<", close: "/>", keyword: "PII" };
     if (options.vcsIdentities === true) {
-      const tagFormat = anonymizerConfig.tagFormat ?? options.tagFormat;
-      if (tagFormat !== undefined) {
-        anonymizer
-          .getRegistry()
-          .register(protectIdentityTags(githubUsernameRecognizer, tagFormat));
-        anonymizer
-          .getRegistry()
-          .register(protectIdentityTags(gitIdentityRecognizer, tagFormat));
-      }
+      anonymizer
+        .getRegistry()
+        .register(protectIdentityTags(githubUsernameRecognizer, tagFormat));
+      anonymizer
+        .getRegistry()
+        .register(protectIdentityTags(gitIdentityRecognizer, tagFormat));
     }
     await anonymizer.initialize();
 
-    const tagFormat =
-      anonymizerConfig.tagFormat ?? options.tagFormat ?? { open: "<", close: "/>", keyword: "PII" };
     const tagPrefix = buildTagPrefix(tagFormat);
     const rehydraInstruction = `<rehydra>\n${buildPIISystemInstruction(tagFormat)}\n</rehydra>`;
 

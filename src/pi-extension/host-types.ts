@@ -1,7 +1,7 @@
 /**
  * Pi 扩展宿主的本地结构化类型。
  *
- * 与 `src/opencode-plugin/v2/types.ts` 的做法一致：只声明本扩展真正用到的
+ * 只声明本扩展真正用到的
  * Pi `ExtensionAPI` 形状，而不是 import `@earendil-works/pi-coding-agent`。
  * 这样 SDK 对 Pi 不产生任何硬运行时/类型依赖，也不会在安装时被迫拉取宿主
  * 包；Pi 在运行时会传入真实对象，结构化类型保证接口兼容。

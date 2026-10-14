@@ -120,4 +120,48 @@ describe("Rehydra Pi extension", () => {
     // 不含 tag 的入参保持原样。
     expect((event.input as { command: string }).command).toBe("echo hello world");
   });
+  it("keeps multi-text-block toolResult stable across repeated context scrubs", async () => {
+    const startHandler = mock.handlers.find((h) => h.name === "session_start")!;
+    await startHandler.handler({}, mock.ctx);
+
+    const messages = [
+      { role: "user", content: "go", timestamp: 0 },
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "call-9", arguments: { command: "cat a.txt" } },
+        ],
+        timestamp: 0,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-9",
+        content: [
+          { type: "text", text: `value=${TEST_SECRET}` },
+          { type: "text", text: "second block" },
+        ],
+        timestamp: 0,
+      },
+    ];
+
+    const handler = eventHandler(mock, "context_with_system");
+    const event = {
+      type: "context_with_system",
+      messages,
+    } as unknown as ContextWithSystemEvent;
+    await handler(event, mock.ctx);
+
+    const blocks = () =>
+      (messages[2] as { content: { type: string; text: string }[] }).content;
+    expect(blocks()).toHaveLength(2);
+    expect(blocks()[0]!.text).not.toContain(TEST_SECRET);
+    expect(blocks()[0]!.text).toContain("<PII");
+    expect(blocks()[1]!.text).toBe("second block");
+
+    // 第二轮全量重扫历史：块结构与文本必须保持不变（不合并、不累积尾换行）
+    const afterFirst = blocks().map((b) => b.text);
+    await handler(event, mock.ctx);
+    expect(blocks()).toHaveLength(2);
+    expect(blocks().map((b) => b.text)).toEqual(afterFirst);
+  });
 });

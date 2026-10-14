@@ -2,7 +2,7 @@
  * 宿主无关的脱敏核心。
  *
  * 该模块封装了把任意 JSON 树中的字符串递归匿名化的流程，且不绑定到
- * OpenCode / Pi 等具体宿主。其设计要点：
+ * 具体宿主，可复用于 Pi 这类不同宿主。其设计要点：
  *
  * - 接受一个轻量 {@link ScrubHost} 抽象，由宿主提供日志与命令反查能力。
  * - 递归扫描一份克隆出来的消息树，整个过程成功后才把结果回写到原始对象，
@@ -50,7 +50,7 @@ export interface ScrubHost {
   ): Partial<AnonymizationPolicy>;
 }
 
-/** 与 OpenCode 共享 logger 兼容的最小接口。 */
+/** 宿主提供的最小 logger 接口。 */
 export interface HostLogger {
   debug(message: string, extra?: Record<string, unknown>): void;
   info(message: string, extra?: Record<string, unknown>): void;
@@ -78,7 +78,7 @@ export interface ScrubPart {
   [key: string]: unknown;
 }
 
-/** V1 风格的 part state（用于兼容历史 OpenCode message）。 */
+/** 旧式 part state 结构（用于兼容历史消息格式）。 */
 export interface ScrubPartState {
   status?: string;
   input?: unknown;

@@ -1,5 +1,5 @@
 {
-  "name": "rehydra-pi",
+  "name": "pi-rehydra",
   "version": "0.15.0",
   "description": "Rehydra Pi extension — anonymizes secrets in Pi conversations via the ExtensionAPI.",
   "type": "module",
@@ -47,11 +47,6 @@
   ],
   "author": "EightDoor",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/EightDoor/opencode-rehydra-sdk.git",
-    "directory": "packages/pi-extension"
-  },
   "engines": {
     "node": ">=22.19.0"
   },

@@ -1,7 +1,8 @@
 {
-  "name": "opencode-rehydra-core",
+  "name": "rehydra",
   "version": "0.15.0",
-  "description": "On-device PII anonymization core SDK (opencode-rehydra-core). Ships the OpenCode plugin as opencode-rehydar.",
+  "description": "Rehydra on-device PII anonymization core — private build project; the published package is pi-rehydra.",
+  "private": true,
   "main": "dist/index.js",
   "module": "dist/index.js",
   "browser": "./dist/browser.js",
@@ -60,10 +61,6 @@
         "default": "./dist/proxy/index.js"
       }
     },
-    "./opencode-plugin": {
-      "types": "./dist/opencode-plugin/index.d.ts",
-      "default": "./dist/opencode-plugin/index.js"
-    },
     "./pi-extension": {
       "types": "./dist/pi-extension/index.d.ts",
       "default": "./dist/pi-extension/index.js"
@@ -88,11 +85,8 @@
     "test:streaming": "npx tsx scripts/test-streaming.ts",
     "lint": "eslint src --ext .ts",
     "clean": "rm -rf dist",
-    "publish:core": "npm run build && npm publish --access public",
-    "publish:plugin": "npm run build && cd packages/opencode-plugin && npm publish --access public && cd ../..",
     "publish:pi-extension": "npm run build && cd packages/pi-extension && npm publish --access public && cd ../..",
-    "publish:all": "npm run build && npm publish --access public && cd packages/opencode-plugin && npm publish --access public && cd ../.. && cd packages/pi-extension && npm publish --access public && cd ../..",
-    "pack:dry-run": "npm pack --dry-run && cd packages/opencode-plugin && npm pack --dry-run && cd ../.. && cd packages/pi-extension && npm pack --dry-run && cd ../..",
+    "pack:dry-run": "npm run build && cd packages/pi-extension && npm pack --dry-run && cd ../..",
     "version": "node scripts/sync-versions.mjs",
     "version:patch": "npm version patch -m \"%s\"",
     "version:minor": "npm version minor -m \"%s\"",
@@ -108,21 +102,11 @@
     "privacy",
     "ner",
     "onnx",
-    "opencode",
-    "opencode-plugin",
     "pi",
     "pi-extension"
   ],
   "author": "EightDoor",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/EightDoor/opencode-rehydra-sdk.git"
-  },
-  "bugs": {
-    "url": "https://github.com/EightDoor/opencode-rehydra-sdk/issues"
-  },
-  "homepage": "https://github.com/EightDoor/opencode-rehydra-sdk#readme",
   "optionalDependencies": {
     "onnxruntime-node": "^1.17.0"
   },

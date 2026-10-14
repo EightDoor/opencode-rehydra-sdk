@@ -1,12 +1,10 @@
 /**
  * Pi extension 配置类型。
  *
- * 与 OpenCode plugin 保持对齐，但去掉只在 OpenCode V2 hook 上下文存在的字段：
+ * 去掉只在服务端宿主上下文存在的字段：
  * - 不需要 `envBaseDirectory`（Pi 扩展以当前 `cwd` 为根）。
- * - 不需要 `anonymizer` 全量覆盖，扩展内部统一构建。
  *
- * 字段在 Pi 包的 `settings.json` `extensions` 配置中作为 `options.envFiles` 等
- * 传入；扩展本身只读取，不写。
+ * 字段由用户在 `~/.pi/agent/settings.json` 的 `rehydra` 键提供；扩展只读取，不写。
  */
 import type { AnonymizerConfig } from "../core/anonymizer.js";
 import type {
@@ -15,7 +13,7 @@ import type {
 } from "../types/index.js";
 import type { PIIType } from "../types/pii-types.js";
 
-/** 与 OpenCode plugin 一致的 PII 类型字符串名集合。 */
+/** PII 类型字符串名集合。 */
 export type PIITypeName = `${PIIType}`;
 
 export interface RehydraPiExtensionOptions {

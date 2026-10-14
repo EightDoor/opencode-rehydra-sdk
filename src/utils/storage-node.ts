@@ -18,7 +18,7 @@ export class NodeStorageProvider implements StorageProvider {
    * Filters out matched paths whose parent directories cannot be read by
    * the current process. fast-glob's `suppressErrors` does not prevent
    * per-entry permission warnings from being surfaced as log lines by the
-   * embedding host (e.g. OpenCode), so we drop unreadable entries here.
+   * embedding host, so we drop unreadable entries here.
    */
   private static async filterReadable(paths: readonly string[]): Promise<string[]> {
     const results = await Promise.all(
@@ -75,7 +75,7 @@ export class NodeStorageProvider implements StorageProvider {
       })).sort();
       // fast-glob's `suppressErrors` still prints per-entry EACCES/EPERM
       // warnings through the Taskgraph / internal warning channel that the
-      // OpenCode host surfaces as WARN log lines on every periodic reload.
+      // embedding host surfaces as WARN log lines on every periodic reload.
       // Filter the results ourselves to drop entries that point at
       // subtrees we cannot stat, which prevents those WARN logs without
       // changing the happy-path behavior.

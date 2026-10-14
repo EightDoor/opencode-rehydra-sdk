@@ -13,7 +13,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 // 与根包同步版本的子包；新增子包时在此登记
 const SUB_PACKAGE_FILES = [
-  "packages/opencode-plugin/package.json",
   "packages/pi-extension/package.json",
 ];
 

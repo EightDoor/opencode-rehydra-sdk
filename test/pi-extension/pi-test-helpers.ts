@@ -30,6 +30,7 @@ export interface MockPiOptions {
   cwd?: string;
   redactValues?: string[];
   envFiles?: string[];
+  vcsIdentities?: boolean;
 }
 
 /**
@@ -84,13 +85,20 @@ export function createMockPiContext(options: MockPiOptions = {}): MockPiContext 
     registerCommand: () => undefined,
     getSettings: () => {
       const settings: Record<string, unknown> = {};
-      if (options.redactValues !== undefined || options.envFiles !== undefined) {
+      if (
+        options.redactValues !== undefined ||
+        options.envFiles !== undefined ||
+        options.vcsIdentities !== undefined
+      ) {
         settings.rehydra = {
           ...(options.redactValues !== undefined
             ? { redactValues: options.redactValues }
             : {}),
           ...(options.envFiles !== undefined
             ? { envFiles: options.envFiles }
+            : {}),
+          ...(options.vcsIdentities !== undefined
+            ? { vcsIdentities: options.vcsIdentities }
             : {}),
         };
       }

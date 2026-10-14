@@ -8,17 +8,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EightDoor/opencode-rehydra-sdk/issues">Issues</a> ·
   <a href="./README.md">中文</a>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/opencode-rehydra-core"><img src="https://img.shields.io/npm/v/opencode-rehydra-core?color=blue" alt="npm" /></a>
-  <a href="https://github.com/EightDoor/opencode-rehydra-sdk/blob/main/LICENSE"><img src="https://img.shields.io/github/license/EightDoor/opencode-rehydra-sdk" alt="license" /></a>
+  <a href="https://www.npmjs.com/package/pi-rehydra"><img src="https://img.shields.io/npm/v/pi-rehydra?color=blue" alt="npm" /></a>
 </p>
 
 <p align="center">
-  <code>npm i opencode-rehydra-core</code> · <code>npm i <a href="packages/opencode-plugin/">opencode-rehydar</a></code>
+  <code>pi install npm:pi-rehydra</code>
 </p>
 
 ## The Problem
@@ -36,53 +34,27 @@ You need **pseudonyms** the LLM can work with and your tools can reverse.
 
 ## Quick Start
 
-### OpenCode plugin
+### Pi extension
 
 ```bash
-npm install opencode-rehydar
+pi install npm:pi-rehydra
 ```
 
-Enable it in `opencode.json` (V2 uses a `plugins` list):
+Add the package declaration and configuration in `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "plugins": [
-    {
-      "package": "opencode-rehydar",
-      "options": { "envFiles": [".env", ".env.local"] }
-    }
-  ]
+  "packages": [
+    { "source": "npm:pi-rehydra" }
+  ],
+  "rehydra": {
+    "envFiles": [".env", ".env.local"],
+    "redactValues": ["sk-live-abc123..."]
+  }
 }
 ```
 
-It intercepts the conversation between [OpenCode](https://github.com/sst/opencode) and the LLM. Secrets from `.env` files are replaced with placeholders before they leave your machine and restored before tools execute. Requires OpenCode's **V2** plugin API; the V1 `plugin` configuration and hook set are not supported.
-
-The plugin scrubs the session-title request (`session.hook("title")`), but rehydrates responses only for the primary answer (`http.response` with `kind === "primary"`). Session titles can therefore display `<PII .../>` placeholders, so disable the title agent to avoid placeholder titles; see [the limitation and configuration](packages/opencode-plugin/README.en.md#session-title-limitation).
-
-### Library — embed PII anonymization in your app
-
-The highly customizable backbone behind the implementations above. Supports custom NER models, encryption key providers, session storage providers, tag formats and many more tweaks.
-
-```typescript
-import { anonymize } from 'opencode-rehydra-core';
-
-const { anonymizedText } = await anonymize(
-  'Email john.smith@acme-corp.com or call John at +41 79 123 45 67'
-);
-```
-
-Works in **Node.js**, **Bun**, and **browsers**. No data leaves your machine.
-
-### Proxy module
-
-The SDK ships a `rehydra/proxy` module you can embed in your own services. It anonymizes outbound messages and rehydrates tool-call arguments before they execute, so the LLM works with placeholders while your tools always get real values.
-
-```typescript
-import { createRehydraProxy } from "rehydra/proxy";
-// Mount createRehydraProxy({ ... }) on the host you control.
-```
-
-Tool results (file reads, bash output) are anonymized on the way out. Tool call arguments (file writes, bash commands) are rehydrated on the way back.
+It intercepts the conversation between [Pi](https://pi.dev) and the LLM: secrets from `.env` files are replaced with placeholders before they leave your machine and restored before tools execute. Messages sent to the model and tool results are scrubbed (`context_with_system` / `tool_result`); tool arguments and the final answer are rehydrated (`tool_call` / `message_end`). See the [Pi extension documentation](packages/pi-extension/README.en.md) for configuration, hooks, and limitations.
 
 ## Why Rehydra?
 
@@ -101,71 +73,7 @@ NER inference runs locally via ONNX Runtime (~280 MB quantized model). No API ca
 ### Core capabilities
 
 - **Secrets, not just PII**: beyond names, emails, and phone numbers, Rehydra detects API keys (OpenAI, Anthropic, Stripe, AWS, GitHub...), JWTs, private keys, database connection strings, and `.env` secrets.
-- **Streaming-aware**: purpose-built for LLM token streams. A sentence-buffered chunking system with NER overlap preservation ensures accurate detection even when PII spans chunk boundaries, with a low-latency mode for real-time streaming.
-- **Server-side tool loops**: `createRehydraFetch` supports `onToolCall` for OpenAI Chat Completions and Anthropic Messages requests with `stream: true`. The first response is buffered and its complete tool calls are validated before callbacks run. Interleaved calls retain their IDs and arguments. Tool arguments are rehydrated locally, and tool results are anonymized before the next request. Continuation requests use `stream: false`; the final response is returned as provider-compatible SSE including completion events and usage. This buffers the initial response and final JSON response, so it does not preserve token-by-token generation latency. Streams without tool calls retain their original events. Set `maxToolRounds` to bound callback rounds (default 10) and `maxToolResponseBytes` to bound each buffered response (default 8 MiB); on reaching the round limit, pending calls are returned to the caller without execution. Pass an `AbortSignal` through fetch to cancel buffering or prevent later callbacks; a callback already running must manage its own cancellation. Truncated calls, malformed arguments, and oversized streams fail before tool execution. Upstream HTTP errors retain their status. OpenAI tool loops require a single completion choice. Custom providers can opt in through `streamingToolLoop` on `LLMContentProvider`.
 - **Semantic enrichment for machine translation**: optional gender and scope attributes on PII tags (`<PII type="PERSON" gender="male" id="1"/>`, `<PII type="LOCATION" scope="city" id="2"/>`) preserve grammatical context for downstream systems.
-- **Stable external tag IDs**: callers that manage PII maps across independent anonymization calls can seed lowercase alphanumeric IDs through `existingPiiMap`. This allows an ID to be derived from the value it masks, for example with a keyed HMAC, instead of depending on a per-call counter.
-
-```typescript
-const existingPiiMap = new Map([
-  ['EMAIL_a4f2c9d8e7b6q', 'alice@acme.com'],
-]);
-
-const result = await anonymizer.anonymize(
-  'Email alice@acme.com',
-  undefined,
-  policy,
-  existingPiiMap,
-);
-// → 'Email <PII type="EMAIL" id="a4f2c9d8e7b6q"/>'
-```
-
-External IDs must match `[0-9a-z]+`. Decimal-only IDs retain their existing numeric behavior. Avoid IDs beginning with recognizer prefixes such as `case`, `file`, `ref`, or `ticket`, and avoid runs of seven or more digits; those shapes may themselves be detected as case IDs or phone numbers inside an inbound tag.
-
-## Example: Full Round-Trip with Sessions
-
-```typescript
-import {
-  createAnonymizer,
-  InMemoryKeyProvider,
-  SQLitePIIStorageProvider,
-} from 'opencode-rehydra-core';
-
-const keyProvider = new InMemoryKeyProvider();
-const anonymizer = createAnonymizer({
-  ner: {
-    mode: 'quantized',              // ~280 MB model, auto-downloads on first use
-    caseFallback: true,             // detect lowercase names like "tom"
-    thresholds: { PERSON: 0.8 },   // require higher confidence for names
-    onStatus: console.log,          // log model download progress
-  },
-  semantic: { enabled: true },      // adds gender/scope attributes for MT
-  secrets: { enabled: true },       // detect API keys, JWTs, connection strings
-  keyProvider,
-  piiStorageProvider: new SQLitePIIStorageProvider('./pii.db'),
-});
-
-const session = anonymizer.session('chat-123');
-
-// Message 1 — NER detects names and orgs, regex catches emails
-const r1 = await session.anonymize(
-  'Tell John Smith at Acme Corp (john.smith@acme-corp.com) we accept the offer'
-);
-// → "Tell <PII type="PERSON" gender="male" id="1"/> at <PII type="ORG" id="2"/>
-//    (<PII type="EMAIL" id="3"/>) we accept the offer"
-
-// Message 2 — same entities keep their IDs across messages
-const r2 = await session.anonymize(
-  'CC john.smith@acme-corp.com and loop in admin@acme-corp.com'
-);
-// → "CC <PII type="EMAIL" id="3"/> and loop in <PII type="EMAIL" id="4"/>"
-
-// Rehydrate any message — PII map is loaded from SQLite automatically
-const original = await session.rehydrate(r2.anonymizedText);
-// → "CC john.smith@acme-corp.com and loop in admin@acme-corp.com"
-
-await anonymizer.dispose();
-```
 
 ## Address detection
 
@@ -177,14 +85,10 @@ Disable `ADDRESS` or `POSTAL_CODE` through the detection policy to opt out of ei
 
 | Package | Description |
 |---------|-------------|
-| [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core) | Core SDK — detect, anonymize, rehydrate |
-| [`opencode-rehydar`](packages/opencode-plugin/) | OpenCode plugin — scrubs secrets before they reach LLM providers |
-| [`rehydra-pi`](packages/pi-extension/) | Pi extension — anonymizes PII inside Pi via the ExtensionAPI |
+| [`pi-rehydra`](packages/pi-extension/) | Pi extension — detects and replaces PII and secrets in Pi conversations, restoring them before tool execution and in the final answer |
 
 ## Documentation
 
-- [Core SDK usage](#library--embed-pii-anonymization-in-your-app)
-- [OpenCode plugin](packages/opencode-plugin/README.en.md)
 - [Pi extension](packages/pi-extension/README.en.md)
 - [中文](README.md)
 

@@ -1,4 +1,4 @@
-# rehydra-pi
+# pi-rehydra
 
 在主 LLM 请求发出之前，脱敏 Pi 对话中检测到的密钥。
 
@@ -13,7 +13,7 @@
 ## 安装
 
 ```bash
-pi install npm:rehydra-pi
+pi install npm:pi-rehydra
 ```
 
 Pi 会在 `~/.pi/agent/settings.json` 写入包声明。然后编辑该文件添加扩展配置：
@@ -22,7 +22,7 @@ Pi 会在 `~/.pi/agent/settings.json` 写入包声明。然后编辑该文件添
 {
   "packages": [
     {
-      "source": "npm:rehydra-pi"
+      "source": "npm:pi-rehydra"
     }
   ],
   "rehydra": {
@@ -32,7 +32,7 @@ Pi 会在 `~/.pi/agent/settings.json` 写入包声明。然后编辑该文件添
 }
 ```
 
-`rehydra` 键的所有字段对应 [`opencode-rehydra-core`](https://www.npmjs.com/package/opencode-rehydra-core) 的同名选项，详见仓库 README。`envFiles` 默认是 `["**/.env*"]`，会跳过 `node_modules`、`.git` 和符号链接。
+`rehydra` 键的所有字段都是扩展配置项：`envFiles`、`redactValues`、`minValueLength`、`disableTypes`、`locale`、`vcsIdentities`、`policy`、`anonymizer`、`tagFormat`。`envFiles` 默认是 `["**/.env*"]`，会跳过 `node_modules`、`.git` 和符号链接。
 
 ## 工作原理
 
