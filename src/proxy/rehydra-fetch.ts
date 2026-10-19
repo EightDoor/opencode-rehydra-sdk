@@ -17,6 +17,10 @@ import { buildPIISystemInstruction } from "./system-instruction.js";
 import { buildTagPrefix } from "../utils/regex.js";
 import { accumulateToolStream, readToolResponse, toolResultStream } from "./tool-loop-stream.js";
 import { DEFAULT_TAG_FORMAT } from "../types/index.js";
+import {
+  ToolArgumentRehydrateError,
+  rehydrateToolArgumentsInPlace,
+} from "../utils/tool-arguments.js";
 
 /** Headers to strip from proxied responses — the body is decompressed and may be modified. */
 const STRIP_RESPONSE_HEADERS = ["content-encoding", "content-length"];
@@ -400,7 +404,7 @@ async function rehydrateJSONResponseFromBody(
  * Handle multi-round tool execution loop.
  *
  * When the LLM returns tool calls, this function:
- * 1. Rehydrates tool call arguments (restores real PII)
+ * 1. Rehydrates tool call arguments (restores real PII); unresolved placeholders abort
  * 2. Calls the user's onToolCall callback for each tool call
  * 3. Anonymizes the result
  * 4. Appends assistant + tool result messages to the conversation
@@ -416,6 +420,7 @@ async function handleToolLoop(
   originalRequest: Request,
 ): Promise<Response> {
   const maxRounds = config.maxToolRounds ?? 10;
+  const tagFormat = config.anonymizer?.tagFormat ?? DEFAULT_TAG_FORMAT;
 
   // Parse the initial response
   const readResponse = (response: Response): Promise<string> =>
@@ -460,14 +465,26 @@ async function handleToolLoop(
     // Rehydrate arguments and invoke the user's callback
     const toolResults: ToolResultMessage[] = [];
     for (const tc of toolCallInfos) {
-      // Rehydrate the arguments string to restore real PII
+      // 严格还原工具参数：JSON 解析失败才退化为 `{ raw }`，但还原本身失败必须
+      // 中止 —— 否则 `<PII .../>` 会作为真实参数传给工具。
       originalRequest.signal.throwIfAborted();
       let parsedArgs: Record<string, unknown>;
       try {
-        const args = JSON.parse(tc.arguments) as Record<string, unknown>;
-        parsedArgs = await session.rehydrateJson(args);
+        parsedArgs = JSON.parse(tc.arguments) as Record<string, unknown>;
       } catch {
-        parsedArgs = { raw: await session.rehydrate(tc.arguments) };
+        parsedArgs = { raw: tc.arguments };
+      }
+      try {
+        parsedArgs = (await rehydrateToolArgumentsInPlace(parsedArgs, session, {
+          tagFormat,
+        })) as Record<string, unknown>;
+      } catch (err) {
+        const code =
+          err instanceof ToolArgumentRehydrateError ? err.code : "rehydrate-failed";
+        return errorResponse(
+          400,
+          `Tool call "${tc.name}" arguments contain unresolved PII placeholders (${code}); refusing to execute`,
+        );
       }
       originalRequest.signal.throwIfAborted();
 

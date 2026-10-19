@@ -81,6 +81,14 @@ The default regex registry detects UK postcode syntax and numbered English-langu
 
 Disable `ADDRESS` or `POSTAL_CODE` through the detection policy to opt out of either recognizer.
 
+## Case-id detection and tool-call blocking
+
+The default generic case-id rule matches only `CASE` / `FILE` / `REF` / `TICKET` ids that carry an **explicit separator** (space, tab or hyphen) **and at least one digit**, such as `CASE-123456` or `TICKET-456789`; glue-on (`CASE123456`) and letters-only (`CASEABCDEF`) forms no longer match. This keeps real business ids while stopping short source identifiers such as `case CapPower:` from being replaced with placeholders. Declare other shapes with `createCustomIdRecognizer`. German ids and caller-provided patterns are unchanged.
+
+Tool arguments (Pi `tool_call` and the proxy's built-in tool loop) are rehydrated **strictly** before local execution: every argument is restored and verified on a copy first, and any placeholder that cannot be resolved — not in this session's map, partial, missing map, or decryption failure — aborts the call instead of handing `<PII .../>` to the tool as a real value. Plain text rehydration and display paths stay lenient.
+Tools that intentionally write tag examples (`write` / `edit`) can be exempted per tool name via `allowLiteralTagsIn`: unresolvable literal tags are kept and logged, while resolvable tags are still restored in every tool.
+
+A placeholder can only be restored from the map of the **same session**. The Pi extension uses an in-memory map by default, so tags from before a process restart cannot be restored and such calls are blocked; use a persistent key provider and storage when you need to survive restarts.
 ## Packages
 
 | Package | Description |

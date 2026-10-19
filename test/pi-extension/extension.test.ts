@@ -164,4 +164,193 @@ describe("Rehydra Pi extension", () => {
     expect(blocks()).toHaveLength(2);
     expect(blocks().map((b) => b.text)).toEqual(afterFirst);
   });
+
+  /**
+   * 事故回归：用户消息里的真实值被脱敏成标签，模型返回带标签的命令，
+   * 工具执行前必须还原成原始命令；还原不了的标签必须阻断执行。
+   */
+  async function scrubUserMessage(text: string): Promise<string> {
+    const startHandler = mock.handlers.find((h) => h.name === "session_start")!;
+    await startHandler.handler({}, mock.ctx);
+    const message = { role: "user", content: text, timestamp: 0 } as never;
+    await eventHandler(mock, "context_with_system")(
+      { type: "context_with_system", messages: [message] } as ContextWithSystemEvent,
+      mock.ctx,
+    );
+    return (message as { content: string }).content;
+  }
+
+  it("restores the original command before the tool runs", async () => {
+    const original = `cd gateway && go get ${TEST_SECRET}/v3@latest 2>&1 | tail -2`;
+    const modelFacing = await scrubUserMessage(original);
+
+    // 模型侧只能看到占位符。
+    expect(modelFacing).not.toContain(TEST_SECRET);
+    expect(modelFacing).toContain("<PII");
+
+    const event: ToolCallEvent = {
+      type: "tool_call",
+      toolCallId: "call-roundtrip",
+      toolName: "bash",
+      input: { command: modelFacing },
+    } as ToolCallEvent;
+
+    const result = await eventHandler(mock, "tool_call")(event, mock.ctx);
+
+    expect(result).toBeUndefined();
+    expect((event.input as { command: string }).command).toBe(original);
+  });
+
+  it("blocks the tool call when a tag cannot be restored", async () => {
+    const modelFacing = await scrubUserMessage(`use ${TEST_SECRET} now`);
+    const bogus = modelFacing.replace(/id="[^"]+"/, 'id="987654"');
+
+    const event: ToolCallEvent = {
+      type: "tool_call",
+      toolCallId: "call-block",
+      toolName: "bash",
+      input: { command: `curl ${bogus}`, other: modelFacing },
+    } as ToolCallEvent;
+
+    const result = (await eventHandler(mock, "tool_call")(event, mock.ctx)) as {
+      block?: boolean;
+      reason?: string;
+    };
+
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("unresolved-tag");
+    // 阻断时不得留下部分还原的入参，也不得回显参数正文。
+    expect((event.input as { command: string }).command).toBe(`curl ${bogus}`);
+    expect(result?.reason).not.toContain(TEST_SECRET);
+  });
+
+  it("blocks a tag when the session has no PII map", async () => {
+    // 只启动会话、不做脱敏：该会话没有任何映射，标签无从还原。
+    const startHandler = mock.handlers.find((h) => h.name === "session_start")!;
+    await startHandler.handler({}, mock.ctx);
+    const event: ToolCallEvent = {
+      type: "tool_call",
+      toolCallId: "call-nomap",
+      toolName: "bash",
+      input: { command: 'echo "<PII type="EMAIL" id="1"/>"' },
+    } as ToolCallEvent;
+
+    const result = (await eventHandler(mock, "tool_call")(event, mock.ctx)) as {
+      block?: boolean;
+      reason?: string;
+    };
+
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("missing-pii-map");
+  });
+
+  /**
+   * 回归：scrub 回写必须保持 Pi 的 content 结构。
+   * 曾经把 scrub 侧结构（`{type:"tool-result", result:[...]}`）整体覆盖
+   * `message.content`，结果模型看不到任何工具输出。
+   */
+  it("keeps Pi content blocks when scrubbing tool results", async () => {
+    const startHandler = mock.handlers.find((h) => h.name === "session_start")!;
+    await startHandler.handler({}, mock.ctx);
+
+    const toolResult = {
+      role: "toolResult",
+      toolCallId: "call-1",
+      content: [{ type: "text", text: `Config: API_KEY=${TEST_SECRET}` }],
+      isError: false,
+      timestamp: 0,
+    } as never;
+
+    await eventHandler(mock, "context_with_system")(
+      {
+        type: "context_with_system",
+        messages: [{ role: "user", content: "ready", timestamp: 0 } as never, toolResult],
+      } as ContextWithSystemEvent,
+      mock.ctx,
+    );
+
+    const blocks = (toolResult as { content: unknown[] }).content;
+    expect(blocks).toHaveLength(1);
+    const block = blocks[0] as { type: string; text: string };
+    // 结构保持 text 块（不是 scrub 侧的 tool-result 结构），内容已脱敏。
+    expect(block.type).toBe("text");
+    expect(block.text).not.toContain(TEST_SECRET);
+    expect(block.text).toContain("<PII");
+  });
+
+  it("writes scrubbed text, thinking and toolCall arguments back in place", async () => {
+    const startHandler = mock.handlers.find((h) => h.name === "session_start")!;
+    await startHandler.handler({}, mock.ctx);
+
+    const assistant = {
+      role: "assistant",
+      content: [
+        { type: "text", text: `key ${TEST_SECRET}` },
+        { type: "thinking", thinking: `thinking about ${TEST_SECRET}` },
+        { type: "toolCall", id: "call-9", name: "bash", arguments: { command: `echo ${TEST_SECRET}` } },
+      ],
+      timestamp: 0,
+    } as never;
+
+    await eventHandler(mock, "context_with_system")(
+      {
+        type: "context_with_system",
+        messages: [{ role: "user", content: "ready", timestamp: 0 } as never, assistant],
+      } as ContextWithSystemEvent,
+      mock.ctx,
+    );
+
+    const content = (assistant as { content: Record<string, unknown>[] }).content;
+    expect(content.map((block) => block["type"])).toEqual(["text", "thinking", "toolCall"]);
+    expect(content[0]?.["text"]).not.toContain(TEST_SECRET);
+    expect(content[1]?.["thinking"]).not.toContain(TEST_SECRET);
+    expect((content[2]?.["arguments"] as { command: string }).command).not.toContain(TEST_SECRET);
+    // toolCall 的 id/name 不能被改写。
+    expect(content[2]?.["id"]).toBe("call-9");
+    expect(content[2]?.["name"]).toBe("bash");
+  });
+
+  /**
+   * `allowLiteralTagsIn` 是显式配置的豁免：只对列出的工具放行字面标签，
+   * 其他工具仍然严格阻断（默认不豁免）。
+   */
+  it("lets only the configured tools keep unresolvable literal tags", async () => {
+    const localMock = createMockPiContext({
+      redactValues: [TEST_SECRET],
+      allowLiteralTagsIn: ["write"],
+    });
+    createRehydraPiExtension(localMock.api);
+    await localMock.handlers.find((h) => h.name === "session_start")!.handler(
+      {},
+      localMock.ctx,
+    );
+
+    const literal = 'doc: <PII type="PERSON" id="999999"/>';
+    const toolCall = eventHandler(localMock, "tool_call");
+
+    // 配置放行的工具：字面标签原样保留，不阻断（该会话甚至还没有脱敏映射）。
+    const writeEvent = {
+      type: "tool_call",
+      toolCallId: "call-write",
+      toolName: "write",
+      input: { path: "doc.md", content: literal },
+    } as ToolCallEvent;
+    const writeResult = await toolCall(writeEvent, localMock.ctx);
+    expect(writeResult).toBeUndefined();
+    expect((writeEvent.input as { content: string }).content).toBe(literal);
+
+    // 未配置的工具：仍然阻断。
+    const bashEvent = {
+      type: "tool_call",
+      toolCallId: "call-bash",
+      toolName: "bash",
+      input: { command: `echo ${literal}` },
+    } as ToolCallEvent;
+    const bashResult = (await toolCall(bashEvent, localMock.ctx)) as {
+      block?: boolean;
+      reason?: string;
+    };
+    expect(bashResult?.block).toBe(true);
+    expect(bashResult?.reason).toContain("missing-pii-map");
+  });
 });

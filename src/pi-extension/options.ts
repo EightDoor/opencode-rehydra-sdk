@@ -34,6 +34,8 @@ export interface RehydraPiExtensionOptions {
 
   /** Redact identities found in Git and GitHub CLI output. */
   vcsIdentities?: boolean;
+  /** 允许这些工具的参数里出现无法还原的字面标签（默认空 = 一律阻断）。 */
+  allowLiteralTagsIn?: string[];
 
   /** Policy overrides applied to every scrub pass. */
   policy?: Partial<AnonymizationPolicy>;

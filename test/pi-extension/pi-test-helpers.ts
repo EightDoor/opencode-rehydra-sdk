@@ -31,6 +31,7 @@ export interface MockPiOptions {
   redactValues?: string[];
   envFiles?: string[];
   vcsIdentities?: boolean;
+  allowLiteralTagsIn?: string[];
 }
 
 /**
@@ -85,17 +86,19 @@ export function createMockPiContext(options: MockPiOptions = {}): MockPiContext 
     registerCommand: () => undefined,
     getSettings: () => {
       const settings: Record<string, unknown> = {};
-      if (
+      const needsOptions =
         options.redactValues !== undefined ||
         options.envFiles !== undefined ||
-        options.vcsIdentities !== undefined
-      ) {
+        options.vcsIdentities !== undefined ||
+        options.allowLiteralTagsIn !== undefined;
+      if (needsOptions) {
         settings.rehydra = {
           ...(options.redactValues !== undefined
             ? { redactValues: options.redactValues }
             : {}),
-          ...(options.envFiles !== undefined
-            ? { envFiles: options.envFiles }
+          ...(options.envFiles !== undefined ? { envFiles: options.envFiles } : {}),
+          ...(options.allowLiteralTagsIn !== undefined
+            ? { allowLiteralTagsIn: options.allowLiteralTagsIn }
             : {}),
           ...(options.vcsIdentities !== undefined
             ? { vcsIdentities: options.vcsIdentities }

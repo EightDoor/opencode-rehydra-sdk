@@ -65,8 +65,12 @@ export const COMMON_ID_PATTERNS: Record<string, RegExp> = {
   // German case/file reference patterns
   germanCaseId: /\b[A-Z]{2,3}[\s-]?[0-9]{4,10}[\s-]?[A-Z0-9]{0,4}\b/g,
 
-  // Generic case number (e.g., CASE-12345)
-  genericCaseNumber: /\b(?:CASE|FILE|REF|TICKET)[\s-]?[A-Z0-9]{4,12}\b/gi,
+  // Generic case number (e.g., CASE-12345).
+  // 通用编号必须带显式分隔符且含数字：否则 `case`/`file`/`ref` 等语言关键字与
+  // 普通标识符（如 `case CodeUnauthorized:`）会被当成业务编号写入占位符。
+  // 纯字母、紧连前缀的编号需要调用方用自定义规则显式声明。
+  genericCaseNumber:
+    /\b(?:CASE|FILE|REF|TICKET)[ \t-](?=[A-Z0-9]{4,12}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{4,12}\b/gi,
 
   // Customer number patterns
   customerNumber: /\b(?:CUST|CUSTOMER|KD|KUNDEN)[\s-]?(?:NR|NO|NUM|NUMBER)?[\s-]?[0-9]{4,12}\b/gi,

@@ -89,6 +89,12 @@ export interface ToolCallEvent {
   parentToolCallId?: string;
 }
 
+/** `tool_call` 处理器的返回值：`block` 为真时 Pi 不执行该工具。 */
+export interface ToolCallEventResult {
+  block?: boolean;
+  reason?: string;
+}
+
 /** 工具执行完成后的结果事件。 */
 export interface ToolResultEvent {
   type: "tool_result";
@@ -141,7 +147,7 @@ export interface ExtensionAPI {
   ): () => void;
   on(
     event: "tool_call",
-    handler: ExtensionEventHandler<ToolCallEvent>,
+    handler: ExtensionEventHandler<ToolCallEvent, ToolCallEventResult | undefined>,
   ): () => void;
   on(
     event: "tool_result",

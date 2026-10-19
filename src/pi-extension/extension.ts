@@ -1,10 +1,10 @@
 /**
  * Pi 扩展的 ExtensionAPI 适配层。
  *
- * 与 {@link scrubCore} / `deepRehydrate` 配合，把脱敏能力挂到 Pi 的事件钩子上。
+ * 与 {@link scrubCore} / `rehydrateToolArgumentsInPlace` 配合，把脱敏能力挂到 Pi 的事件钩子上。
  *
  * - `context_with_system` 在每个 LLM 请求前对 `messages` 做脱敏；
- * - `tool_call` 在工具执行前就地还原工具入参中的 PII 标签；
+ * - `tool_call` 在工具执行前严格还原入参标签；还原不全即阻断该次调用；
  * - `tool_result` 在结果回填给模型前就地脱敏真实 PII；
  * - `message_end` 改写最终 assistant 文本，把 PII 标签还原为真值；
  * - `session_start` / `session_shutdown` 管理会话与匿名器生命周期；
@@ -59,7 +59,10 @@ import {
   type ScrubMessage,
   type ScrubPart,
 } from "../host-agnostic/scrub.js";
-import { deepRehydrateJson } from "../utils/json-walk.js";
+import {
+  ToolArgumentRehydrateError,
+  rehydrateToolArgumentsInPlace,
+} from "../utils/tool-arguments.js";
 
 /** Pi 扩展运行时状态：跨多个事件共享。 */
 interface PiExtensionState {
@@ -70,6 +73,8 @@ interface PiExtensionState {
   tagPrefix: string;
   rehydraInstruction: string;
   vcsIdentities: boolean;
+  /** 允许字面标签放行的工具名（见 `allowLiteralTagsIn`）。 */
+  allowLiteralTagsIn: Set<string>;
   resolveSession: (sessionId: string) => AnonymizerSessionImpl;
 }
 
@@ -206,8 +211,9 @@ function normalizeMessagesForScrub(messages: AgentMessage[]): MessageRewrite {
  * scrub 后把 parts 改动写回到 AgentMessage，保持 Pi 原始 content 结构。
  *
  * - user string content：取 scrub 后第一段 text 还原回字符串；
- * - toolResult：scrub 侧逐 text 块收集为文本数组，还原时按块索引逐块写回，
- *   多轮往返稳定（不合并、不压平）；
+ * - toolResult：scrub 侧逐 text 块收集为文本数组，这里按块索引逐块写回
+ *   （多轮往返稳定，不合并、不压平）；**不能**拿 scrub 侧结构覆盖 Pi 的
+ *   content，那会让 toolResult 变成 scrub 侧结构、模型看不到任何工具输出；
  * - 其余（user / assistant 数组 content）：parts 与原始 content 元素一一对应，
  *   按块类型回写 text / thinking / toolCall.arguments。
  */
@@ -229,6 +235,7 @@ function restoreMessagesFromScrub(
       }
       return;
     }
+
     const parts = scrub.content;
     if (!Array.isArray(parts)) return;
     const originalContent = original.content;
@@ -241,13 +248,13 @@ function restoreMessagesFromScrub(
         (block): block is Record<string, unknown> =>
           block !== null &&
           typeof block === "object" &&
-          (block as { type?: unknown }).type === "text",
+          (block as { type?: string }).type === "text",
       );
       // result 与 text 块逐块对应（scrub 侧逐块收集），按索引写回保证往返稳定。
       restored.forEach((value, i) => {
         const block = textBlocks[i];
         if (block !== undefined && typeof value === "string") {
-          block.text = value;
+          block["text"] = value;
         }
       });
       return;
@@ -263,14 +270,15 @@ function restoreMessagesFromScrub(
 
 /** 把单个 scrub part 的结果写回对应的 Pi content 块，不改变块结构。 */
 function writeScrubbedBlock(block: Record<string, unknown>, part: ScrubPart): void {
-  if (block.type === "text" && typeof part.text === "string") {
-    block.text = part.text;
-  } else if (block.type === "thinking" && typeof part.text === "string") {
-    block.thinking = part.text;
-  } else if (block.type === "toolCall" && part.type === "tool-call") {
-    block.arguments = part.input;
+  if (block["type"] === "text" && typeof part.text === "string") {
+    block["text"] = part.text;
+  } else if (block["type"] === "thinking" && typeof part.text === "string") {
+    block["thinking"] = part.text;
+  } else if (block["type"] === "toolCall" && part.type === "tool-call") {
+    block["arguments"] = part.input;
   }
 }
+
 function agentMessageToScrub(message: AgentMessage): ScrubMessage {
   const role = (message as { role?: string }).role;
   if (role === "user") {
@@ -297,7 +305,7 @@ function agentMessageToScrub(message: AgentMessage): ScrubMessage {
   if (role === "toolResult") {
     const toolCallId = (message as { toolCallId?: string }).toolCallId;
     const content = (message as { content?: unknown }).content;
-    // 逐 text 块收集为文本数组：scrubValue 会递归逐串脱敏，回写可逐块还原，
+    // 逐 text 块收集为文本数组：scrub 侧会递归逐串脱敏，回写时按块索引还原，
     // 多轮往返保持不动点（不 join、不压平）。
     const texts: string[] = [];
     if (Array.isArray(content)) {
@@ -419,6 +427,7 @@ export function createRehydraPiExtension(pi: ExtensionAPI): void {
       tagPrefix,
       rehydraInstruction,
       vcsIdentities: options.vcsIdentities === true,
+      allowLiteralTagsIn: new Set(options.allowLiteralTagsIn ?? []),
       resolveSession(sessionId: string): AnonymizerSessionImpl {
         let session = sessionMap.get(sessionId);
         if (session === undefined) {
@@ -482,15 +491,34 @@ export function createRehydraPiExtension(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     const state = runtime.state;
     if (state === undefined) return undefined;
-    // Pi 把工具入参存放在 `event.input` 中；直接 deep-rehydrate。
     const session = state.resolveSession(ctx.sessionManager.getSessionId());
-    // `deepRehydrateJson` 就地修改对象/数组并返回同一引用，工具入参始终是对象，
-    // 因此无需重新赋值（避免 any 赋值与冗余断言）。
-    await deepRehydrateJson(
-      event.input,
-      (text: string) => session.rehydrate(text),
-      state.tagPrefix,
-    );
+    // 严格还原：还原不全就阻断，绝不把 `<PII .../>` 当真实值交给工具执行。
+    // 宿主契约（已核对 pi 运行时）：`{block: true}` 会直接产出 error 工具结果、不执行工具。
+    // 放行是显式配置的豁免，必须留痕；logger 复用扩展统一的 output 格式。
+    const log = createConsoleLogger();
+    try {
+      await rehydrateToolArgumentsInPlace(event.input, session, {
+        tagFormat: state.tagFormat,
+        allowUnresolved: state.allowLiteralTagsIn.has(event.toolName),
+        onUnresolvedTag: (path) => {
+          // 只记工具名与参数路径，不记正文。
+          log.warn("allowed literal tag in tool args", {
+            tool: event.toolName,
+            path,
+          });
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof ToolArgumentRehydrateError ? error.code : "rehydrate-failed";
+      // reason 只带原因码，不回显命令或参数正文。
+      return {
+        block: true,
+        reason:
+          `工具参数包含无法还原的 PII 占位符（${code}），已阻止执行。` +
+          `请改用真实值，或检查本次会话的脱敏映射是否仍然可用。`,
+      };
+    }
     return undefined;
   });
 

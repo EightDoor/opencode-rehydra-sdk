@@ -34,6 +34,8 @@ export interface RehydraSharedOptions {
   minValueLength?: number;
   disableTypes?: PIITypeName[];
   vcsIdentities?: boolean;
+  /** 允许这些工具的参数里出现无法还原的字面标签（默认空 = 一律阻断）。 */
+  allowLiteralTagsIn?: string[];
   locale?: string;
   tagFormat?: TagFormat;
   policy?: Partial<AnonymizationPolicy>;
@@ -94,6 +96,7 @@ export function normalizeRehydraOptions(raw: unknown): RehydraSharedOptions {
     disableTypes: asPIITypeNames(source.disableTypes) ?? DEFAULT_DISABLE_TYPES,
     vcsIdentities:
       typeof source.vcsIdentities === "boolean" ? source.vcsIdentities : false,
+    allowLiteralTagsIn: asStringArray(source.allowLiteralTagsIn) ?? [],
     locale: typeof source.locale === "string" ? source.locale : undefined,
     tagFormat: asTagFormat(source.tagFormat),
   };

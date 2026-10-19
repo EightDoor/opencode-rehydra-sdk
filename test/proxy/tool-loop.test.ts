@@ -224,6 +224,105 @@ describe("Tool execution loop (onToolCall)", () => {
     expect(toolMsg.tool_call_id).toBe("call_1");
   });
 
+  it("should block a tool call whose arguments carry an unresolvable PII tag", async () => {
+    mockServer = await createMockServer(() =>
+      toolCallResponse([
+        {
+          id: "call_stale",
+          name: "lookup_user",
+          // 该 id 不在本会话映射里：不能把占位符当参数交给工具。
+          arguments: '{"email":"<PII type=\\"EMAIL\\" id=\\"999999\\"/>"}',
+        },
+      ]),
+    );
+
+    const { port } = mockServer;
+    let toolCallCount = 0;
+
+    const rehydraFetch = createRehydraFetch({
+      keyProvider: new InMemoryKeyProvider(),
+      piiStorageProvider: new InMemoryPIIStorageProvider(),
+      provider: "openai",
+      getSessionId: async () => "unresolved-tag",
+      onToolCall: async () => {
+        toolCallCount++;
+        return { ok: true };
+      },
+    });
+
+    const response = await rehydraFetch(
+      `http://127.0.0.1:${port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+        body: JSON.stringify({
+          model: "gpt-4",
+          messages: [
+            { role: "user", content: "Look up the user john@example.com" },
+          ],
+        }),
+      },
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(400);
+    // 工具绝不能被执行。
+    expect(toolCallCount).toBe(0);
+
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("unresolved PII placeholders");
+    expect(body.error.message).not.toContain("john@example.com");
+  });
+
+  it("should block a tool call whose arguments carry a mangled (fuzzy) PII tag", async () => {
+    // 旧实现只按字面前缀判断，`<pii …/>` 这类变体既不会还原也不会阻断。
+    mockServer = await createMockServer(() =>
+      toolCallResponse([
+        {
+          id: "call_fuzzy",
+          name: "lookup_user",
+          arguments: '{"email":"<pii type=\\"EMAIL\\" id=\\"999999\\"/>"}',
+        },
+      ]),
+    );
+
+    const { port } = mockServer;
+    let toolCallCount = 0;
+
+    const rehydraFetch = createRehydraFetch({
+      keyProvider: new InMemoryKeyProvider(),
+      piiStorageProvider: new InMemoryPIIStorageProvider(),
+      provider: "openai",
+      getSessionId: async () => "fuzzy-tag",
+      onToolCall: async () => {
+        toolCallCount++;
+        return { ok: true };
+      },
+    });
+
+    const response = await rehydraFetch(
+      `http://127.0.0.1:${port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+        body: JSON.stringify({
+          model: "gpt-4",
+          messages: [
+            { role: "user", content: "Look up the user john@example.com" },
+          ],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(toolCallCount).toBe(0);
+  });
   it("should handle multi-round tool calls", async () => {
     let callCount = 0;
     mockServer = await createMockServer((body, callIndex) => {
